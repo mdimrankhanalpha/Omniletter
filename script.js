@@ -3,7 +3,8 @@
   Two experiences only:
     1. Profile page (normal URL). Searching the secret phrase reveals the feed on the same page.
     2. A single standalone letter at  ?post=ID
-  Content comes from post.txt (see the format notes in the reply / below).
+  Content comes from post.txt: posts are separated by a line containing only "-".
+  The top post in the file is the newest. Each post's ID lives in the file as an "ID:" line.
 
   NOTE: the search phrase is a discreet interface feature, NOT security.
   Anyone can read this public file. Random IDs make links hard to guess,
@@ -66,29 +67,36 @@
     return cache;
   }
 
-  var DELIM = /^\s*\(-\s*Post\s*-\)\s*$/i;
+  // A post boundary is a line that is ONLY a hyphen. (The older "(- Post -)" line is still accepted.)
+  var DIVIDER = /^(?:-|\s*\(-\s*Post\s*-\))[ \t]*$/i;
   var KEY = /^\s*(ID|TITLE|DATE|TEXT|IMAGE|VIDEO|AUDIO|FILE|THUMB|CAPTION)\s*:\s?(.*)$/i;
   var MEDIA = { IMAGE: 'image', VIDEO: 'video', AUDIO: 'audio', FILE: 'file' };
+  var srcLines = [];
 
   function parsePosts(text) {
     var lines = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
-    var chunks = [], cur = [];
-    lines.forEach(function (line) {
-      if (DELIM.test(line)) { chunks.push(cur); cur = []; } else { cur.push(line); }
-    });
-    chunks.push(cur);
+    srcLines = lines;
+    var posts = [], seen = {}, cur = [], start = 0;
 
-    var posts = [], seen = {};
-    chunks.forEach(function (c) {
-      if (!c.join('').trim()) return;
+    function endPost() {
+      var c = cur, first = -1;
+      cur = [];
+      for (var i = 0; i < c.length; i++) { if (c[i].trim()) { first = start + i; break; } }
+      if (first < 0) return;                       // empty chunk (e.g. repeated dividers): no fake post
       var p = parsePost(c);
+      p.at = first;                                // line number of the post's first line
+      p.raw = c.join('\n').trim();
       var key = p.id.toLowerCase();
       if (p.id && seen[key]) p.dupe = true; else if (p.id) seen[key] = true;
       posts.push(p);
+    }
+
+    lines.forEach(function (line, i) {
+      if (DIVIDER.test(line)) { endPost(); start = i + 1; }   // whole-line match only
+      else cur.push(line);
     });
-    // File order is oldest -> newest (new posts are added at the bottom). Newest shown first.
-    posts.reverse();
-    return posts;
+    endPost();                                     // last post needs no trailing divider
+    return posts;                                  // file order: top of the file = newest = shown first
   }
 
   function parsePost(lines) {
@@ -354,7 +362,7 @@
     if (post.date) art.appendChild(el('p', 'post-date', post.date));
     post.blocks.forEach(function (b) { art.appendChild(renderBlock(b)); });
     if (!isLetter) {
-      if (!post.id) art.appendChild(el('p', 'warn', 'This post has no ID line yet, so it has no permanent link. Add an "ID:" line to post.txt.'));
+      if (!post.id) art.appendChild(el('p', 'warn', 'Permanent link pending: publish the updated post.txt (see the note at the top).'));
       else if (post.dupe) art.appendChild(el('p', 'warn', 'This ID is used by more than one post. Give this post its own unique ID.'));
       else art.appendChild(copyButton(post.id));
     }
@@ -591,6 +599,7 @@
         feed.textContent = '';
         if (!posts.length) { feed.appendChild(el('p', 'error', 'No letters have been delivered yet.')); return; }
         var frag = document.createDocumentFragment();
+        if (prepareIds(posts)) frag.appendChild(savePanel(posts));
         posts.forEach(function (p) { frag.appendChild(renderPost(p, false)); });
         feed.appendChild(frag);
         feed.scrollIntoView();
@@ -627,33 +636,100 @@
     });
   }
 
+  /* ---------- Automatic IDs ---------- */
+  // Posts that have no "ID:" line in post.txt get a random ID generated here. A static site cannot
+  // commit to GitHub, so the owner copies the updated post.txt once and pastes it into the repo.
+  // Until then the ID only exists in this browser: it is not permanent and not shareable.
+
+  var PENDING_KEY = 'omniletter-pending';
+  var ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // 31 symbols, no look-alike characters
+
+  function newId(used) {
+    for (;;) {
+      var s = '';
+      while (s.length < 12) {
+        var bytes = new Uint8Array(24), i;
+        if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+        else for (i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256); // last resort
+        for (i = 0; i < bytes.length && s.length < 12; i++) {
+          if (bytes[i] < 248) s += ALPHABET.charAt(bytes[i] % 31); // reject biased values
+        }
+      }
+      var id = 'omniletter-' + s;
+      if (!used[id]) { used[id] = true; return id; }          // duplicate check
+    }
+  }
+
+  function hashStr(str) {
+    var h = 5381;
+    for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }
+
+  // Gives every ID-less post a new ID. Returns true if any were needed.
+  // Browser storage only keeps the SAME new ID between visits until the file is published,
+  // so a second copy of the file cannot hand out different IDs. It is never the source of truth.
+  function prepareIds(posts) {
+    var used = {}, store = {}, next = {}, count = {}, any = false;
+    posts.forEach(function (p) { if (p.id) used[p.id.toLowerCase()] = true; });
+    try { store = JSON.parse(localStorage.getItem(PENDING_KEY) || '{}') || {}; } catch (e) { store = {}; }
+    posts.forEach(function (p) {
+      if (p.id) return;
+      var h = hashStr(p.raw);
+      count[h] = (count[h] || 0) + 1;
+      var key = h + '#' + count[h];
+      var id = store[key];
+      if (!id || used[id]) id = newId(used); else used[id] = true;
+      next[key] = id;
+      p.newId = id;
+      any = true;
+    });
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify(next)); } catch (e) { /* ignore */ }
+    return any;
+  }
+
+  // The original file with an "ID:" line inserted above each post that lacked one. Nothing else changes.
+  function buildFile(posts) {
+    var ins = {};
+    posts.forEach(function (p) { if (p.newId) ins[p.at] = p.newId; });
+    var out = [];
+    srcLines.forEach(function (line, i) {
+      if (ins[i]) out.push('ID: ' + ins[i]);
+      out.push(line);
+    });
+    return out.join('\n');
+  }
+
+  function savePanel(posts) {
+    var n = posts.filter(function (p) { return p.newId; }).length;
+    var box = el('div', 'savebox');
+    box.appendChild(el('p', '', n + (n === 1 ? ' post has' : ' posts have') +
+      ' no permanent ID in post.txt yet, so random IDs were generated. Copy the updated post.txt, paste it over ' +
+      'post.txt in your GitHub repository and commit. The links start working once that is published.'));
+    var btn = el('button', 'copy', 'Copy post.txt with IDs');
+    btn.type = 'button';
+    var status = el('span', 'copied');
+    status.setAttribute('role', 'status');
+    btn.onclick = function () {
+      var t = buildFile(posts);
+      copyText(t).then(function (ok) {
+        if (ok) { status.textContent = 'Copied'; return; }
+        status.textContent = 'Copy the text below manually';
+        if (box.querySelector('textarea')) return;
+        var ta = document.createElement('textarea');
+        ta.readOnly = true; ta.rows = 8; ta.value = t;
+        box.appendChild(ta);
+        ta.focus(); ta.select();
+      });
+    };
+    box.appendChild(btn);
+    box.appendChild(status);
+    return box;
+  }
+
   /* ---------- Start ---------- */
 
   var id = new URLSearchParams(location.search).get('post');
   if (id !== null) postMode(id.trim()); else profileMode();
 
-  /*
-    ID helper for the site owner: open the site, open the browser console and run
-        omniletterNewId()
-    It returns a new random ID (browser crypto) that is not used in post.txt yet.
-  */
-  window.omniletterNewId = function () {
-    return loadPosts().then(function (posts) {
-      var used = {};
-      posts.forEach(function (p) { if (p.id) used[p.id.toLowerCase()] = true; });
-      var A = 'abcdefghjkmnpqrstuvwxyz23456789'; // 31 symbols, no look-alike characters
-      for (;;) {
-        var s = '';
-        while (s.length < 12) {
-          var bytes = new Uint8Array(24);
-          crypto.getRandomValues(bytes);
-          for (var i = 0; i < bytes.length && s.length < 12; i++) {
-            if (bytes[i] < 248) s += A.charAt(bytes[i] % 31); // reject biased values
-          }
-        }
-        var nid = 'omniletter-' + s;
-        if (!used[nid]) { console.log(nid); return nid; }
-      }
-    });
-  };
 })();

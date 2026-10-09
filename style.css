@@ -184,3 +184,7 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.savebox { margin: 18px 0 4px; padding: 14px; border: 1px dashed var(--gold); background: var(--card); font-size: .9rem; }
+.savebox p { margin: 0 0 10px; }
+.savebox textarea { display: block; width: 100%; margin-top: 10px; font: .8rem ui-monospace, Menlo, Consolas, monospace; }
