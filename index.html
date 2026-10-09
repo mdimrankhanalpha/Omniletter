@@ -3,11 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>&#8203;</title>
+<meta name="theme-color" content="#e6dcc4">
+<title>Omniletter</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main id="app"></main>
-<script src="script.js" defer></script>
+
+<!-- PAGE ONE: profile (the normal first experience) -->
+<main id="profile" class="sheet profile">
+  <header>
+    <div class="frame"><img id="photo" alt="Omniletter" decoding="async"></div>
+    <h1>Omniletter</h1>
+    <p class="role">Postman</p>
+    <hr class="rule">
+    <p class="bio">An extraordinary postman of the eighteenth century, delivering messages across any distance, time, dimension, universe, or barrier.</p>
+  </header>
+
+  <form id="search" class="search" role="search" autocomplete="off">
+    <input id="q" type="search" name="q" placeholder="Search" aria-label="Search"
+           enterkeyhint="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button type="submit" aria-label="Search">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+    </button>
+  </form>
+  <p id="smsg" class="smsg" role="status" aria-live="polite"></p>
+</main>
+
+<!-- Revealed on the same page after a matching search -->
+<section id="feed" class="sheet feed" hidden aria-label="Letters"></section>
+
+<!-- PAGE TWO: a single standalone letter (?post=ID) -->
+<article id="letter" class="sheet letter" hidden></article>
+
+<noscript><p class="smsg">This page needs JavaScript.</p></noscript>
+
+<!-- Loaded without defer so the right page is chosen before first paint -->
+<script src="script.js"></script>
 </body>
 </html>

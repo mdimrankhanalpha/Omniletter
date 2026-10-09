@@ -1,636 +1,659 @@
+/*
+  OMNILETTER
+  Two experiences only:
+    1. Profile page (normal URL). Searching the secret phrase reveals the feed on the same page.
+    2. A single standalone letter at  ?post=ID
+  Content comes from post.txt (see the format notes in the reply / below).
+
+  NOTE: the search phrase is a discreet interface feature, NOT security.
+  Anyone can read this public file. Random IDs make links hard to guess,
+  they do not make public content private.
+*/
 (function () {
   'use strict';
 
-  var SITE = 'https://mdimrankhanalpha.github.io/Omniletter/';
-  var RAW_URL = 'https://raw.githubusercontent.com/mdimrankhanalpha/Omniletter/main/post.txt';
-  var AVATAR = 'https://raw.githubusercontent.com/mdimrankhanalpha/Omniletter/main/file_0000000031dc81f5b9c4b218e22bc747.png';
-  var BATCH = 15;
-  var BASE = document.currentScript ? new URL('./', document.currentScript.src).href : location.href;
-  var VIDEO_EXT = /\.(mp4|m4v|webm|ogv|ogg|mov)(\?|#|$)/i;
+  var PHOTO = 'https://github.com/mdimrankhanalpha/Omniletter/blob/main/file_0000000031dc81f5b9c4b218e22bc747.png';
+  var POST_RAW = 'https://raw.githubusercontent.com/mdimrankhanalpha/Omniletter/main/post.txt';
+  var POST_LOCAL = 'post.txt';
+  // SHA-256 of the phrase, so it is not sitting in plain text (obscurity only, not protection)
+  var PHRASE_HASH = 'e3f333a84b62e21100e3b3060450ae1bdd274997cf120ebb8999e6462b0c7694';
 
-  var app = document.getElementById('app');
+  var $ = function (id) { return document.getElementById(id); };
 
-  /* ---------- helpers ---------- */
-
-  function el(tag, cls) {
+  function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
+    if (text) n.textContent = text;
     return n;
   }
-  function empty(n) { while (n.firstChild) n.removeChild(n.firstChild); }
-  function safeUrl(u) {
-    if (!u) return null;
-    try {
-      var x = new URL(u, BASE);
-      return (x.protocol === 'http:' || x.protocol === 'https:') ? x.href : null;
-    } catch (e) { return null; }
+
+  /* ---------- URLs ---------- */
+
+  // Ordinary github.com/.../blob/... file links become raw file links. Everything else is untouched.
+  function rawUrl(u) {
+    var m = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/([^\/]+)\/([^?#]+)(?:[?#].*)?$/i.exec(u);
+    return m ? 'https://raw.githubusercontent.com/' + m[1] + '/' + m[2] + '/' + m[3] + '/' + m[4] : u;
   }
-  function extLink(url, label) {
-    var a = el('a', 'ext');
-    a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.textContent = label;
-    return a;
+
+  function cleanUrl(u) {
+    u = (u || '').trim();
+    if (!u || /^(javascript|data|vbscript):/i.test(u)) return '';
+    return rawUrl(u);
   }
-  function broken(msg, url) {
-    var d = el('div', 'broken');
-    d.setAttribute('role', 'status');
-    d.appendChild(document.createTextNode(msg + ' '));
-    if (url) {
-      var a = document.createElement('a');
-      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      a.textContent = 'Open the link directly';
-      d.appendChild(a);
+
+  function permalink(id) {
+    return location.href.split(/[?#]/)[0] + '?post=' + encodeURIComponent(id);
+  }
+
+  /* ---------- Loading and parsing post.txt ---------- */
+
+  var cache = null;
+
+  function fetchText() {
+    return fetch(POST_RAW, { cache: 'no-cache' })
+      .then(function (r) { if (!r.ok) throw new Error('raw'); return r.text(); })
+      .catch(function () {
+        return fetch(POST_LOCAL, { cache: 'no-cache' })
+          .then(function (r) { if (!r.ok) throw new Error('local'); return r.text(); });
+      });
+  }
+
+  // The whole file must be downloaded and parsed to find one post (one text file = one request).
+  function loadPosts() {
+    if (!cache) {
+      cache = fetchText().then(parsePosts).catch(function (e) { cache = null; throw e; });
     }
-    return d;
-  }
-  function caption(fig, text) {
-    if (!text) return;
-    var c = el('figcaption');
-    c.textContent = text;
-    fig.appendChild(c);
+    return cache;
   }
 
-  /* ---------- routing ---------- */
+  var DELIM = /^\s*\(-\s*Post\s*-\)\s*$/i;
+  var KEY = /^\s*(ID|TITLE|DATE|TEXT|IMAGE|VIDEO|AUDIO|FILE|THUMB|CAPTION)\s*:\s?(.*)$/i;
+  var MEDIA = { IMAGE: 'image', VIDEO: 'video', AUDIO: 'audio', FILE: 'file' };
 
-  var params = new URLSearchParams(location.search);
-  var postId = params.get('post');
-  var wantsFeed = params.has('alpha72') ||
-    /^#\/?alpha72\/?$/i.test(location.hash) ||
-    /\/alpha72\/?$/i.test(location.pathname);
-
-  if (postId !== null) showPost(postId.trim());
-  else if (wantsFeed) showFeed();
-  /* otherwise: blank page, nothing is rendered or fetched */
-
-  /* ---------- loading and parsing post.txt ---------- */
-
-  function fetchText(url) {
-    return fetch(url).then(function (r) {
-      if (!r.ok) throw new Error(String(r.status));
-      return r.text();
-    });
-  }
-  function loadText() {
-    return fetchText(RAW_URL).catch(function () {
-      return fetchText(new URL('post.txt', BASE).href);
-    });
-  }
-
-  var START = /^\(-\s*post\s*-\)$/i;
-  var END = /^\(-\s*end\s*-\)$/i;
-  var TAG = /^\[(image|video|audio|file|link)\s*:\s*(.+?)\s*\]$/i;
-  var HEAD = /^(id|date)\s*:\s*(.*)$/i;
-
-  function parseMedia(kind, body) {
-    var parts = body.split('|').map(function (s) { return s.trim(); });
-    var b = { type: kind.toLowerCase(), url: parts.shift(), text: [] };
-    parts.forEach(function (p) {
-      var m = /^(full|poster)\s*=\s*(.+)$/i.exec(p);
-      if (m) b[m[1].toLowerCase()] = m[2].trim();
-      else b.text.push(p);
-    });
-    return b;
-  }
-
-  function parse(raw) {
-    var lines = raw.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
-    var posts = [], seen = {}, cur = null, para = [], inHead = false, skipped = 0;
-
-    function flush() {
-      if (cur && para.length) cur.blocks.push({ type: 'text', text: para.join('\n') });
-      para = [];
-    }
-    function close() {
-      flush();
-      if (cur) {
-        var key = cur.id.toLowerCase();
-        if (key && seen[key]) skipped++;
-        else { if (key) seen[key] = true; posts.push(cur); }
-      }
-      cur = null;
-    }
-
+  function parsePosts(text) {
+    var lines = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
+    var chunks = [], cur = [];
     lines.forEach(function (line) {
-      var t = line.trim();
-      if (START.test(t)) { close(); cur = { id: '', date: '', blocks: [] }; inHead = true; return; }
-      if (!cur) return;
-      if (END.test(t)) { close(); return; }
-      if (inHead) {
-        var h = HEAD.exec(t);
-        if (h) { cur[h[1].toLowerCase()] = h[2].trim(); return; }
-        if (t === '') return;
-        inHead = false;
-      }
-      if (t === '') { flush(); return; }
-      var m = TAG.exec(t);
-      if (m) { flush(); cur.blocks.push(parseMedia(m[1], m[2])); return; }
-      para.push(line.replace(/\s+$/, ''));
+      if (DELIM.test(line)) { chunks.push(cur); cur = []; } else { cur.push(line); }
     });
-    close();
-    if (skipped) console.warn('Omniletter: ' + skipped + ' post(s) ignored because their id repeats an earlier id.');
+    chunks.push(cur);
+
+    var posts = [], seen = {};
+    chunks.forEach(function (c) {
+      if (!c.join('').trim()) return;
+      var p = parsePost(c);
+      var key = p.id.toLowerCase();
+      if (p.id && seen[key]) p.dupe = true; else if (p.id) seen[key] = true;
+      posts.push(p);
+    });
+    // File order is oldest -> newest (new posts are added at the bottom). Newest shown first.
+    posts.reverse();
     return posts;
   }
 
-  /* ---------- copy permanent link ---------- */
+  function parsePost(lines) {
+    var post = { id: '', title: '', date: '', blocks: [] };
+    var text = null;
 
-  function legacyCopy(text) {
-    var a = document.createElement('textarea');
-    a.value = text;
-    a.setAttribute('readonly', '');
-    a.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
-    document.body.appendChild(a);
-    a.select();
-    a.setSelectionRange(0, text.length);
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-    document.body.removeChild(a);
-    return ok;
-  }
-  function copyText(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      return navigator.clipboard.writeText(text).then(function () { return true; },
-        function () { return legacyCopy(text); });
+    function flush() {
+      if (text) {
+        var s = text.join('\n').trim();
+        if (s) post.blocks.push({ type: 'text', text: s });
+        text = null;
+      }
     }
-    return Promise.resolve(legacyCopy(text));
-  }
-  function permalink(id) { return SITE + '?post=' + encodeURIComponent(id); }
 
-  function copyControl(id) {
-    var wrap = el('div', 'post-foot');
-    var btn = el('button', 'btn');
-    btn.type = 'button';
-    btn.textContent = 'Copy Permanent Link';
-    var status = el('span', 'copy-status');
-    status.setAttribute('role', 'status');
-    btn.addEventListener('click', function () {
-      var url = permalink(id);
-      status.textContent = '';
-      copyText(url).then(function (ok) {
-        if (ok) status.textContent = 'Link copied.';
-        else window.prompt('Copy this link:', url);
-      });
+    lines.forEach(function (line) {
+      var m = KEY.exec(line);
+      if (m) {
+        var k = m[1].toUpperCase(), v = m[2].trim();
+        if (k === 'ID') { post.id = v; return; }
+        if (k === 'TITLE') { post.title = v; return; }
+        if (k === 'DATE') { post.date = v; return; }
+        if (k === 'TEXT') { flush(); text = [m[2]]; return; }
+        if (MEDIA[k]) { flush(); post.blocks.push({ type: MEDIA[k], url: v }); return; }
+        // THUMB / CAPTION belong to the media line just above them
+        var b = post.blocks[post.blocks.length - 1];
+        if (!text && b && b.type !== 'text') {
+          if (k === 'CAPTION' && !b.caption) { b.caption = v; return; }
+          if (k === 'THUMB' && (b.type === 'image' || b.type === 'video') && !b.thumb) { b.thumb = v; return; }
+        }
+        // otherwise fall through: keep the line as text rather than dropping it
+      }
+      if (!text) {
+        if (!line.trim()) return;
+        text = [];
+      }
+      text.push(line);
     });
-    wrap.appendChild(btn);
-    wrap.appendChild(status);
-    return wrap;
+    flush();
+    return post;
   }
 
-  /* ---------- blocks ---------- */
+  /* ---------- Rendering ---------- */
 
-  function textBlock(t) {
-    var p = el('p', 'text');
-    var re = /https?:\/\/[^\s<>"]+/g, last = 0, m;
-    while ((m = re.exec(t))) {
-      var u = m[0].replace(/[.,;:!?)\]]+$/, '');
-      if (m.index > last) p.appendChild(document.createTextNode(t.slice(last, m.index)));
-      var a = document.createElement('a');
-      a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      a.textContent = u;
-      p.appendChild(a);
-      last = m.index + u.length;
+  function linkify(parent, str) {
+    var re = /https?:\/\/[^\s<>"']+/g, last = 0, m;
+    while ((m = re.exec(str))) {
+      var url = m[0].replace(/[.,;:!?)\]]+$/, '');
+      parent.appendChild(document.createTextNode(str.slice(last, m.index)));
+      var a = el('a', '', url);
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      parent.appendChild(a);
+      last = m.index + url.length;
       re.lastIndex = last;
     }
-    if (last < t.length) p.appendChild(document.createTextNode(t.slice(last)));
-    return p;
+    parent.appendChild(document.createTextNode(str.slice(last)));
   }
 
-  function imageBlock(b) {
-    var fig = el('figure', 'media');
-    var src = safeUrl(b.url);
-    if (!src) { fig.appendChild(broken('This image link is not valid.')); return fig; }
-    var full = safeUrl(b.full) || src;
-    var alt = b.text[0] || '';
-    var btn = el('button', 'img-open');
+  function withCaption(node, caption) {
+    if (!caption) return node;
+    var f = el('figure');
+    f.appendChild(node);
+    f.appendChild(el('figcaption', '', caption));
+    return f;
+  }
+
+  function renderBlock(b) {
+    if (b.type === 'text') {
+      var frag = document.createDocumentFragment();
+      b.text.split(/\n\s*\n/).forEach(function (para) {
+        var p = el('p');
+        linkify(p, para.trim());
+        frag.appendChild(p);
+      });
+      return frag;
+    }
+    var box = el('div', 'media ' + b.type);
+    if (b.type === 'image') box.appendChild(renderImage(b));
+    else if (b.type === 'video') box.appendChild(renderVideo(b));
+    else if (b.type === 'audio') box.appendChild(renderAudio(b));
+    else box.appendChild(renderFile(b));
+    return box;
+  }
+
+  function renderImage(b) {
+    var full = cleanUrl(b.url);
+    if (!full) return el('div', 'note', 'Image unavailable');
+    var thumb = cleanUrl(b.thumb) || full;
+    var wrap = el('div');
+    var btn = el('button', 'imgbtn');
     btn.type = 'button';
-    btn.setAttribute('aria-label', 'View image full screen' + (alt ? ': ' + alt : ''));
+    btn.setAttribute('aria-label', 'View image full size');
     var img = new Image();
+    img.alt = b.caption || 'Image';
     img.loading = 'lazy';
     img.decoding = 'async';
-    img.alt = alt;
-    img.addEventListener('error', function () {
-      empty(fig);
-      fig.appendChild(broken('This image could not be loaded.', src));
-      caption(fig, b.text[1]);
-    });
-    img.src = src;
-    btn.appendChild(img);
-    btn.addEventListener('click', function () { openViewer(img.currentSrc || src, full, alt, btn); });
-    fig.appendChild(btn);
-    caption(fig, b.text[1]);
-    return fig;
-  }
-
-  function youtube(u) {
-    var x, id = null, short = false, m;
-    try { x = new URL(u); } catch (e) { return null; }
-    var h = x.hostname.replace(/^(www|m|music)\./, '');
-    if (h === 'youtu.be') {
-      id = x.pathname.slice(1).split('/')[0];
-    } else if (h === 'youtube.com' || h === 'youtube-nocookie.com') {
-      if ((m = /^\/shorts\/([\w-]+)/.exec(x.pathname))) { id = m[1]; short = true; }
-      else if ((m = /^\/(?:embed|live|v)\/([\w-]+)/.exec(x.pathname))) id = m[1];
-      else if (x.pathname === '/watch') id = x.searchParams.get('v');
-    }
-    if (!id || !/^[\w-]{6,20}$/.test(id)) return null;
-    var embed = 'https://www.youtube-nocookie.com/embed/' + id + '?rel=0&playsinline=1&autoplay=1';
-    var t = x.searchParams.get('t') || x.searchParams.get('start');
-    if (t && /^\d+s?$/.test(t)) embed += '&start=' + parseInt(t, 10);
-    return {
-      short: short,
-      embed: embed,
-      watch: short ? 'https://www.youtube.com/shorts/' + id : 'https://www.youtube.com/watch?v=' + id
+    var triedFull = thumb === full;
+    img.onerror = function () {
+      if (!triedFull) { triedFull = true; img.src = full; return; }
+      var n = el('div', 'note');
+      n.appendChild(document.createTextNode('Image unavailable. '));
+      var a = el('a', '', 'Open link');
+      a.href = full; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      n.appendChild(a);
+      wrap.replaceChild(n, btn);
     };
+    img.src = thumb;
+    btn.appendChild(img);
+    btn.onclick = function () { openViewer(full, thumb, b.caption); };
+    wrap.appendChild(btn);
+    return withCaption(wrap, b.caption);
   }
 
-  function videoBlock(b) {
-    var fig = el('figure', 'media');
-    var url = safeUrl(b.url);
-    var cap = b.text[0] || '';
-    if (!url) { fig.appendChild(broken('This video link is not valid.')); return fig; }
+  function secs(t) {
+    if (/^\d+$/.test(t)) return +t;
+    var m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(t);
+    return m ? (m[1] | 0) * 3600 + (m[2] | 0) * 60 + (m[3] | 0) : 0;
+  }
 
-    var yt = youtube(url);
+  function ytInfo(u) {
+    try {
+      var x = new URL(u), h = x.hostname.replace(/^(www|m|music)\./, ''), id = null, short = false;
+      var p = x.pathname.split('/').filter(Boolean);
+      if (h === 'youtu.be') id = p[0];
+      else if (h === 'youtube.com' || h === 'youtube-nocookie.com') {
+        if (p[0] === 'shorts') { id = p[1]; short = true; }
+        else if (p[0] === 'embed' || p[0] === 'live' || p[0] === 'v') id = p[1];
+        else if (p[0] === 'watch') id = x.searchParams.get('v');
+      }
+      if (!id || !/^[\w-]{11}$/.test(id)) return null;
+      return { id: id, short: short, start: secs(x.searchParams.get('t') || x.searchParams.get('start') || '') };
+    } catch (e) { return null; }
+  }
+
+  function renderVideo(b) {
+    var url = cleanUrl(b.url);
+    if (!url) return el('div', 'note', 'Video unavailable');
+    var wrap = el('div');
+    var yt = ytInfo(url);
+    var linkText = 'Open video in new tab';
+
     if (yt) {
-      if (yt.short) fig.className += ' short';
-      var wrap = el('div', 'yt-wrap');
-      var box = el('div', 'yt');
-      var play = el('button', 'btn');
+      linkText = 'Open on YouTube';
+      var frame = el('div', 'yt' + (yt.short ? ' short' : ''));
+      var play = el('button', 'yt-play', 'Play video');
       play.type = 'button';
-      play.textContent = yt.short ? 'Play YouTube Short' : 'Play YouTube video';
-      play.addEventListener('click', function () {
+      play.onclick = function () {
         var f = document.createElement('iframe');
-        f.src = yt.embed;
-        f.title = cap || 'YouTube video';
-        f.allow = 'fullscreen; picture-in-picture; encrypted-media';
-        f.allowFullscreen = true;
-        f.referrerPolicy = 'strict-origin-when-cross-origin';
-        empty(box);
-        box.appendChild(f);
-      });
-      box.appendChild(play);
-      wrap.appendChild(box);
-      fig.appendChild(wrap);
-      fig.appendChild(extLink(yt.watch, 'Open on YouTube'));
-    } else if (VIDEO_EXT.test(url)) {
+        f.src = 'https://www.youtube-nocookie.com/embed/' + yt.id + '?autoplay=1&rel=0&playsinline=1' + (yt.start ? '&start=' + yt.start : '');
+        f.title = b.caption || 'Video';
+        f.allow = 'autoplay; fullscreen; picture-in-picture; encrypted-media';
+        f.setAttribute('allowfullscreen', '');
+        f.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+        frame.replaceChild(f, play);
+      };
+      frame.appendChild(play);
+      wrap.appendChild(frame);
+    } else {
       var v = document.createElement('video');
       v.controls = true;
       v.preload = 'none';
       v.setAttribute('playsinline', '');
-      var poster = safeUrl(b.poster);
-      if (poster) v.poster = poster;
-      v.addEventListener('error', function () {
-        empty(fig);
-        fig.appendChild(broken('This video could not be played.', url));
-        caption(fig, cap);
-      });
+      if (b.thumb) v.poster = cleanUrl(b.thumb);
       v.src = url;
-      fig.appendChild(v);
-    } else {
-      fig.appendChild(extLink(url, 'Watch video' + (cap ? ': ' + cap : '')));
-      return fig;
+      v.addEventListener('loadedmetadata', function () {
+        if (v.videoWidth && v.videoHeight) v.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
+      });
+      v.addEventListener('error', function () {
+        if (!wrap.querySelector('.note')) wrap.appendChild(el('div', 'note', 'This video could not be played here.'));
+      });
+      wrap.appendChild(v);
     }
-    caption(fig, cap);
-    return fig;
+
+    var p = el('p', 'medialink');
+    var a = el('a', '', linkText);
+    a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    p.appendChild(a);
+    wrap.appendChild(p);
+    return withCaption(wrap, b.caption);
   }
 
-  function audioBlock(b) {
-    var fig = el('figure', 'media');
-    var url = safeUrl(b.url);
-    if (!url) { fig.appendChild(broken('This audio link is not valid.')); return fig; }
+  function renderAudio(b) {
+    var url = cleanUrl(b.url);
+    if (!url) return el('div', 'note', 'Audio unavailable');
+    var wrap = el('div');
     var a = document.createElement('audio');
     a.controls = true;
     a.preload = 'none';
-    a.addEventListener('error', function () {
-      empty(fig);
-      fig.appendChild(broken('This audio could not be played.', url));
-      caption(fig, b.text[0]);
-    });
     a.src = url;
-    fig.appendChild(a);
-    caption(fig, b.text[0]);
-    return fig;
-  }
-
-  function fileBlock(b) {
-    var p = el('p', 'file');
-    var url = safeUrl(b.url);
-    if (!url) { p.appendChild(broken('This file link is not valid.')); return p; }
-    var a = document.createElement('a');
-    a.href = url; a.download = ''; a.rel = 'noopener noreferrer';
-    a.textContent = 'Download: ' + (b.text[0] || decodeURIComponent(url.split(/[?#]/)[0].split('/').pop() || url));
-    p.appendChild(a);
-    return p;
-  }
-
-  function linkBlock(b) {
-    var p = el('p', 'file');
-    var url = safeUrl(b.url);
-    if (!url) { p.appendChild(broken('This link is not valid.')); return p; }
-    p.appendChild(extLink(url, b.text[0] || url));
-    return p;
-  }
-
-  function postEl(p) {
-    var a = el('article', 'post');
-    if (p.id) a.id = p.id;
-    if (p.date) {
-      var d = el('p', 'date');
-      d.textContent = p.date;
-      a.appendChild(d);
-    }
-    p.blocks.forEach(function (b) {
-      var node;
-      if (b.type === 'text') node = textBlock(b.text);
-      else if (b.type === 'image') node = imageBlock(b);
-      else if (b.type === 'video') node = videoBlock(b);
-      else if (b.type === 'audio') node = audioBlock(b);
-      else if (b.type === 'file') node = fileBlock(b);
-      else node = linkBlock(b);
-      a.appendChild(node);
+    a.addEventListener('error', function () {
+      if (wrap.querySelector('.note')) return;
+      var n = el('div', 'note');
+      n.appendChild(document.createTextNode('Audio could not be played here. '));
+      var l = el('a', '', 'Open link');
+      l.href = url; l.target = '_blank'; l.rel = 'noopener noreferrer';
+      n.appendChild(l);
+      wrap.appendChild(n);
     });
-    if (p.id) a.appendChild(copyControl(p.id));
-    else {
-      var n = el('p', 'copy-status');
-      n.textContent = 'This letter has no id: line, so it has no permanent link.';
-      a.appendChild(n);
-    }
+    wrap.appendChild(a);
+    return withCaption(wrap, b.caption);
+  }
+
+  function renderFile(b) {
+    var url = cleanUrl(b.url);
+    if (!url) return el('div', 'note', 'File unavailable');
+    var name = url.split(/[?#]/)[0].split('/').pop();
+    try { name = decodeURIComponent(name); } catch (e) { /* keep raw name */ }
+    var a = el('a', 'filelink', 'Download: ' + (b.caption || name || 'file'));
+    a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.setAttribute('download', '');
     return a;
   }
 
-  function divider() {
-    var d = el('div', 'divider');
-    d.setAttribute('role', 'separator');
-    var s = document.createElement('span');
-    s.setAttribute('aria-hidden', 'true');
-    s.textContent = '(- -)';
-    d.appendChild(s);
-    return d;
+  /* ---------- Copy permanent link ---------- */
+
+  function legacyCopy(t) {
+    var ta = document.createElement('textarea');
+    ta.value = t;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, t.length);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
   }
 
-  function note(msg) {
-    var p = el('p', 'note');
-    p.setAttribute('role', 'status');
-    p.textContent = msg;
-    return p;
+  function copyText(t) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(t).then(function () { return true; }, function () { return legacyCopy(t); });
+    }
+    return Promise.resolve(legacyCopy(t));
   }
 
-  /* ---------- pages ---------- */
-
-  function showFeed() {
-    document.body.className = 'letters';
-    document.title = 'Omniletter';
-
-    var mast = el('header', 'mast');
-    var av = new Image();
-    av.alt = 'Omniletter, the postman';
-    av.addEventListener('error', function () { av.hidden = true; });
-    av.src = AVATAR;
-    var h1 = el('h1');
-    h1.textContent = 'Omniletter';
-    mast.appendChild(av);
-    mast.appendChild(h1);
-    app.appendChild(mast);
-
-    var list = el('div', 'feed');
-    var wait = note('Delivering letters\u2026');
-    app.appendChild(wait);
-    app.appendChild(list);
-
-    loadText().then(parse).then(function (posts) {
-      app.removeChild(wait);
-      if (!posts.length) { app.appendChild(note('No letters have been delivered yet.')); return; }
-      var order = posts.slice().reverse(); /* file is oldest-first; feed is newest-first */
-      var shown = 0;
-      var moreWrap = el('div', 'more-wrap');
-      var more = el('button', 'btn');
-      more.type = 'button';
-      more.textContent = 'Show older letters';
-      moreWrap.appendChild(more);
-
-      function renderMore() {
-        var frag = document.createDocumentFragment();
-        for (var i = 0; i < BATCH && shown < order.length; i++, shown++) {
-          if (shown > 0) frag.appendChild(divider());
-          frag.appendChild(postEl(order[shown]));
-        }
-        list.appendChild(frag);
-        moreWrap.hidden = shown >= order.length;
-      }
-      more.addEventListener('click', renderMore);
-      app.appendChild(moreWrap);
-      renderMore();
-    }).catch(function () {
-      if (wait.parentNode) app.removeChild(wait);
-      app.appendChild(note('The letters could not be loaded. Check your connection and try again.'));
-    });
+  function copyButton(id) {
+    var wrap = el('div', 'post-foot');
+    var btn = el('button', 'copy', 'Copy Permanent Link');
+    btn.type = 'button';
+    var status = el('span', 'copied');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    var timer;
+    btn.onclick = function () {
+      var link = permalink(id);
+      copyText(link).then(function (ok) {
+        if (!ok) { window.prompt('Copy this link:', link); return; }
+        status.textContent = 'Link copied';
+        clearTimeout(timer);
+        timer = setTimeout(function () { status.textContent = ''; }, 2500);
+      });
+    };
+    wrap.appendChild(btn);
+    wrap.appendChild(status);
+    // Full ID printed in full (selectable) so it can always be copied by hand
+    wrap.appendChild(el('p', 'pid', id));
+    return wrap;
   }
 
-  function showPost(id) {
-    document.body.className = 'letters';
-    document.title = 'Omniletter';
-    var wait = note('Delivering letter\u2026');
-    app.appendChild(wait);
-    loadText().then(parse).then(function (posts) {
-      app.removeChild(wait);
-      var key = id.toLowerCase();
-      var found = null;
-      for (var i = 0; i < posts.length; i++) {
-        if (posts[i].id && posts[i].id.toLowerCase() === key) { found = posts[i]; break; }
-      }
-      if (found) app.appendChild(postEl(found));
-      else app.appendChild(note('This letter could not be found.'));
-    }).catch(function () {
-      if (wait.parentNode) app.removeChild(wait);
-      app.appendChild(note('The letter could not be loaded. Check your connection and try again.'));
-    });
+  function renderPost(post, isLetter) {
+    var art = el('div', 'post');
+    if (post.title) art.appendChild(el(isLetter ? 'h1' : 'h2', 'post-title', post.title));
+    if (post.date) art.appendChild(el('p', 'post-date', post.date));
+    post.blocks.forEach(function (b) { art.appendChild(renderBlock(b)); });
+    if (!isLetter) {
+      if (!post.id) art.appendChild(el('p', 'warn', 'This post has no ID line yet, so it has no permanent link. Add an "ID:" line to post.txt.'));
+      else if (post.dupe) art.appendChild(el('p', 'warn', 'This ID is used by more than one post. Give this post its own unique ID.'));
+      else art.appendChild(copyButton(post.id));
+    }
+    return art;
   }
 
-  /* ---------- image viewer ---------- */
+  /* ---------- Image viewer (zoom, pan, fullscreen) ---------- */
 
-  var vw = null; /* viewer parts, built on first use */
-  var sc = 1, tx = 0, ty = 0, token = 0;
+  var viewer = null;
+
+  function openViewer(full, thumb, caption) {
+    if (!viewer) viewer = buildViewer();
+    viewer.show(full, thumb, caption);
+  }
 
   function buildViewer() {
     var root = el('div', 'viewer');
+    root.hidden = true;
     root.setAttribute('role', 'dialog');
     root.setAttribute('aria-modal', 'true');
     root.setAttribute('aria-label', 'Image viewer');
-    root.hidden = true;
-
-    var stage = el('div', 'v-stage');
-    var img = document.createElement('img');
-    img.draggable = false;
-    stage.appendChild(img);
-
-    var bar = el('div', 'v-bar');
-    function button(label, aria, fn) {
-      var b = el('button', 'btn');
-      b.type = 'button';
-      b.textContent = label;
-      b.setAttribute('aria-label', aria);
-      b.addEventListener('click', fn);
-      bar.appendChild(b);
-      return b;
-    }
-    button('\u2212', 'Zoom out', function () { zoomBy(1 / 1.5); });
-    button('+', 'Zoom in', function () { zoomBy(1.5); });
-    button('Reset', 'Restore normal view', function () { resetView(); });
-    var fsBtn = null;
-    if (document.fullscreenEnabled && root.requestFullscreen) {
-      fsBtn = button('Fullscreen', 'Toggle fullscreen', function () {
-        var p = document.fullscreenElement ? document.exitFullscreen() : root.requestFullscreen();
-        if (p && p.catch) p.catch(function () {});
-      });
-    }
-    var closeBtn = button('Close', 'Close image viewer', function () { closeViewer(false); });
-
-    root.appendChild(stage);
-    root.appendChild(bar);
+    root.innerHTML =
+      '<div class="v-bar">' +
+      '<button type="button" data-act="out" aria-label="Zoom out">\u2212</button>' +
+      '<button type="button" data-act="in" aria-label="Zoom in">+</button>' +
+      '<button type="button" data-act="reset">Reset</button>' +
+      '<button type="button" data-act="full">Fullscreen</button>' +
+      '<button type="button" data-act="close">Close</button>' +
+      '</div>' +
+      '<div class="v-stage"><img alt="" draggable="false"><p class="v-msg" hidden>Image unavailable</p></div>' +
+      '<p class="v-cap" hidden></p>';
     document.body.appendChild(root);
 
-    vw = { root: root, stage: stage, img: img, closeBtn: closeBtn, buttons: bar.querySelectorAll('button'),
-           full: null, fullLoaded: false, opener: null };
+    var stage = root.querySelector('.v-stage');
+    var img = stage.querySelector('img');
+    var msg = root.querySelector('.v-msg');
+    var cap = root.querySelector('.v-cap');
+    var fsBtn = root.querySelector('[data-act="full"]');
+    var closeBtn = root.querySelector('[data-act="close"]');
 
-    /* pointer handling: drag to pan, pinch to zoom, double-tap to toggle */
-    var ptrs = {}, count = 0, pinch = null, multi = false, lastTap = 0, lastX = 0, lastY = 0;
+    var MAX = 8;
+    var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '';
+    var pts = {}, count = 0, moved = false, startX = 0, startY = 0, lastTap = 0, tapX = 0, tapY = 0;
 
-    function pts() { return Object.keys(ptrs).map(function (k) { return ptrs[k]; }); }
-    function rel(x, y) {
-      var r = stage.getBoundingClientRect();
-      return { x: x - r.left - r.width / 2, y: y - r.top - r.height / 2 };
+    var reqFs = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (!reqFs) fsBtn.hidden = true;
+    function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement; }
+
+    function clamp() {
+      var nw = img.naturalWidth || 1, nh = img.naturalHeight || 1;
+      var f = Math.min(stage.clientWidth / nw, stage.clientHeight / nh);
+      var mx = Math.max(0, (nw * f * s - stage.clientWidth) / 2);
+      var my = Math.max(0, (nh * f * s - stage.clientHeight) / 2);
+      x = Math.min(mx, Math.max(-mx, x));
+      y = Math.min(my, Math.max(-my, y));
     }
+    function apply() {
+      clamp();
+      img.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
+      stage.classList.toggle('zoomed', s > 1);
+    }
+    // cx, cy are relative to the stage centre
+    function zoomAt(ns, cx, cy) {
+      ns = Math.min(MAX, Math.max(1, ns));
+      var k = ns / s;
+      x = cx - (cx - x) * k;
+      y = cy - (cy - y) * k;
+      s = ns;
+      if (s === 1) { x = 0; y = 0; }
+      apply();
+    }
+    function rel(px, py) {
+      var r = stage.getBoundingClientRect();
+      return { x: px - r.left - r.width / 2, y: py - r.top - r.height / 2 };
+    }
+    function reset() { s = 1; x = 0; y = 0; apply(); }
+    function hyp(a, b) { return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2)); }
+    function ptList() { return Object.keys(pts).map(function (k) { return pts[k]; }); }
 
     stage.addEventListener('pointerdown', function (e) {
-      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
-      ptrs[e.pointerId] = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false };
-      count++;
-      if (count >= 2) {
-        multi = true;
-        var q = pts();
-        pinch = { d: Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y) || 1, s: sc };
-      }
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      count = Object.keys(pts).length;
+      if (count === 1) { moved = false; startX = e.clientX; startY = e.clientY; }
+      else moved = true;
     });
+
     stage.addEventListener('pointermove', function (e) {
-      var p = ptrs[e.pointerId];
+      var p = pts[e.pointerId];
       if (!p) return;
-      var dx = e.clientX - p.x, dy = e.clientY - p.y;
-      p.x = e.clientX; p.y = e.clientY;
-      if (Math.abs(p.x - p.sx) + Math.abs(p.y - p.sy) > 8) p.moved = true;
-      if (pinch && count >= 2) {
-        var q = pts();
-        var d = Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y);
-        var c = rel((q[0].x + q[1].x) / 2, (q[0].y + q[1].y) / 2);
-        zoomAt(pinch.s * d / pinch.d, c.x, c.y);
-      } else if (count === 1 && sc > 1) {
-        tx += dx; ty += dy;
-        clampPan(); applyView();
+      if (count === 2) {
+        var a = ptList();
+        var d0 = hyp(a[0], a[1]), mx0 = (a[0].x + a[1].x) / 2, my0 = (a[0].y + a[1].y) / 2;
+        p.x = e.clientX; p.y = e.clientY;
+        var b = ptList();
+        var d1 = hyp(b[0], b[1]), mx1 = (b[0].x + b[1].x) / 2, my1 = (b[0].y + b[1].y) / 2;
+        x += mx1 - mx0; y += my1 - my0;
+        var c = rel(mx1, my1);
+        zoomAt(d0 ? s * d1 / d0 : s, c.x, c.y);
+        return;
       }
+      if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 8) moved = true;
+      if (s > 1) {
+        x += e.clientX - p.x; y += e.clientY - p.y;
+        p.x = e.clientX; p.y = e.clientY;
+        apply();
+      } else { p.x = e.clientX; p.y = e.clientY; }
     });
-    function endPointer(e) {
-      var p = ptrs[e.pointerId];
-      if (!p) return;
-      delete ptrs[e.pointerId];
-      count = Math.max(0, count - 1);
-      if (count < 2) pinch = null;
-      if (e.type === 'pointerup' && !p.moved && !multi) {
+
+    function up(e) {
+      if (!pts[e.pointerId]) return;
+      delete pts[e.pointerId];
+      count = Object.keys(pts).length;
+      if (e.type === 'pointerup' && count === 0 && !moved) {
         var now = Date.now();
-        if (now - lastTap < 320 && Math.abs(e.clientX - lastX) < 30 && Math.abs(e.clientY - lastY) < 30) {
+        if (now - lastTap < 320 && Math.abs(e.clientX - tapX) + Math.abs(e.clientY - tapY) < 40) {
           var c = rel(e.clientX, e.clientY);
-          if (sc > 1) resetView(); else zoomAt(2.5, c.x, c.y);
+          zoomAt(s > 1 ? 1 : 2.5, c.x, c.y);   // double-tap / double-click
           lastTap = 0;
-        } else {
-          lastTap = now; lastX = e.clientX; lastY = e.clientY;
-        }
+        } else { lastTap = now; tapX = e.clientX; tapY = e.clientY; }
       }
-      if (count === 0) multi = false;
     }
-    stage.addEventListener('pointerup', endPointer);
-    stage.addEventListener('pointercancel', endPointer);
+    stage.addEventListener('pointerup', up);
+    stage.addEventListener('pointercancel', up);
 
     stage.addEventListener('wheel', function (e) {
       e.preventDefault();
       var c = rel(e.clientX, e.clientY);
-      zoomAt(sc * (e.deltaY < 0 ? 1.15 : 1 / 1.15), c.x, c.y);
+      zoomAt(s * Math.exp(-e.deltaY * 0.0015), c.x, c.y);
     }, { passive: false });
 
-    root.addEventListener('keydown', function (e) {
-      var k = e.key;
-      if (k === 'Escape') { closeViewer(false); e.preventDefault(); }
-      else if (k === '+' || k === '=') zoomBy(1.5);
-      else if (k === '-' || k === '_') zoomBy(1 / 1.5);
-      else if (k === '0') resetView();
-      else if (sc > 1 && (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown')) {
-        if (k === 'ArrowLeft') tx += 60;
-        if (k === 'ArrowRight') tx -= 60;
-        if (k === 'ArrowUp') ty += 60;
-        if (k === 'ArrowDown') ty -= 60;
-        clampPan(); applyView(); e.preventDefault();
-      } else if (k === 'Tab') {
-        var b = vw.buttons, first = b[0], last = b[b.length - 1];
-        if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
-        else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+    root.addEventListener('click', function (e) {
+      var act = e.target.getAttribute && e.target.getAttribute('data-act');
+      if (act === 'in') zoomAt(s * 1.5, 0, 0);
+      else if (act === 'out') zoomAt(s / 1.5, 0, 0);
+      else if (act === 'reset') reset();
+      else if (act === 'close') close();
+      else if (act === 'full') {
+        if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+        else { var pr = reqFs.call(root); if (pr && pr.catch) pr.catch(function () {}); }
       }
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (root.hidden) return;
+      if (e.key === 'Escape') close();
+      else if (e.key === '+' || e.key === '=') zoomAt(s * 1.5, 0, 0);
+      else if (e.key === '-') zoomAt(s / 1.5, 0, 0);
+      else if (e.key === '0') reset();
+    });
+    window.addEventListener('resize', function () { if (!root.hidden) apply(); });
+    document.addEventListener('fullscreenchange', function () { if (!root.hidden) apply(); });
+
+    img.onerror = function () { img.hidden = true; msg.hidden = false; };
+
+    function close() {
+      if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      root.hidden = true;
+      token++;
+      img.removeAttribute('src');
+      document.body.style.overflow = prevOverflow;
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+
+    return {
+      show: function (full, thumb, caption) {
+        lastFocus = document.activeElement;
+        prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        pts = {}; count = 0; lastTap = 0;
+        s = 1; x = 0; y = 0;
+        img.style.transform = '';
+        img.hidden = false; msg.hidden = true;
+        img.alt = caption || 'Image';
+        cap.textContent = caption || '';
+        cap.hidden = !caption;
+        root.hidden = false;
+        var my = ++token;
+        if (thumb && thumb !== full) {
+          // show the small one at once, swap in the full-size one when it has loaded
+          img.src = thumb;
+          var hi = new Image();
+          hi.onload = function () { if (my === token) { img.src = full; } };
+          hi.src = full;
+        } else {
+          img.src = full;
+        }
+        closeBtn.focus();
+      }
+    };
+  }
+
+  /* ---------- Page one: profile and discreet search ---------- */
+
+  function sha256(str) {
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function (buf) {
+      return Array.prototype.map.call(new Uint8Array(buf), function (b) {
+        return ('0' + b.toString(16)).slice(-2);
+      }).join('');
     });
   }
 
-  function applyView() {
-    vw.img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + sc + ')';
-  }
-  function clampPan() {
-    var mx = Math.max(0, (vw.img.clientWidth * sc - vw.stage.clientWidth) / 2);
-    var my = Math.max(0, (vw.img.clientHeight * sc - vw.stage.clientHeight) / 2);
-    tx = Math.min(mx, Math.max(-mx, tx));
-    ty = Math.min(my, Math.max(-my, ty));
-  }
-  function resetView() { sc = 1; tx = 0; ty = 0; applyView(); }
-  function zoomAt(ns, px, py) {
-    ns = Math.min(8, Math.max(1, ns));
-    if (ns > 1) loadFull();
-    var ratio = ns / sc;
-    tx = px - (px - tx) * ratio;
-    ty = py - (py - ty) * ratio;
-    sc = ns;
-    if (sc < 1.001) { sc = 1; tx = 0; ty = 0; }
-    clampPan(); applyView();
-  }
-  function zoomBy(f) { zoomAt(sc * f, 0, 0); }
+  function profileMode() {
+    var photo = $('photo');
+    photo.onerror = function () { photo.parentNode.hidden = true; };
+    photo.src = rawUrl(PHOTO);
 
-  /* the high-resolution file is requested only when the visitor first zooms in */
-  function loadFull() {
-    if (!vw.full || vw.fullLoaded) return;
-    vw.fullLoaded = true;
-    var mine = token, src = vw.full, big = new Image();
-    big.onload = function () { if (mine === token) vw.img.src = src; };
-    big.src = src;
-  }
+    var form = $('search'), input = $('q'), msg = $('smsg'), feed = $('feed');
+    var revealed = false;
 
-  function openViewer(preview, full, alt, opener) {
-    if (!vw) buildViewer();
-    token++;
-    sc = 1; tx = 0; ty = 0; applyView();
-    vw.full = full !== preview ? full : null;
-    vw.fullLoaded = false;
-    vw.opener = opener;
-    vw.img.alt = alt || '';
-    vw.img.src = preview;
-    vw.root.hidden = false;
-    document.documentElement.classList.add('noscroll');
-    history.pushState({ omniViewer: 1 }, '');
-    vw.closeBtn.focus();
-  }
+    input.addEventListener('input', function () { msg.textContent = ''; });
 
-  function closeViewer(fromPop) {
-    if (!vw || vw.root.hidden) return;
-    vw.root.hidden = true;
-    token++;
-    vw.img.removeAttribute('src');
-    document.documentElement.classList.remove('noscroll');
-    if (document.fullscreenElement && document.exitFullscreen) {
-      var p = document.exitFullscreen();
-      if (p && p.catch) p.catch(function () {});
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var v = input.value.trim();
+      if (!v) return;
+      if (!(window.crypto && crypto.subtle)) { msg.textContent = 'Search is unavailable right now.'; return; }
+      sha256(v).then(function (h) {
+        if (h === PHRASE_HASH) { reveal(); }
+        else { msg.textContent = 'No results for \u201C' + v + '\u201D.'; }
+      });
+    });
+
+    function reveal() {
+      if (revealed) { input.value = ''; return; }
+      revealed = true;
+      input.value = '';
+      input.blur();
+      msg.textContent = '';
+      document.body.classList.add('revealed');
+      feed.hidden = false;
+      feed.appendChild(el('p', 'error', 'Delivering letters\u2026'));
+      loadPosts().then(function (posts) {
+        feed.textContent = '';
+        if (!posts.length) { feed.appendChild(el('p', 'error', 'No letters have been delivered yet.')); return; }
+        var frag = document.createDocumentFragment();
+        posts.forEach(function (p) { frag.appendChild(renderPost(p, false)); });
+        feed.appendChild(frag);
+        feed.scrollIntoView();
+      }).catch(function () {
+        feed.textContent = '';
+        feed.appendChild(el('p', 'error', 'The letters could not be loaded. Please try again.'));
+        revealed = false;
+      });
     }
-    if (!fromPop && history.state && history.state.omniViewer) history.back();
-    if (vw.opener && document.contains(vw.opener)) vw.opener.focus();
   }
 
-  window.addEventListener('popstate', function () { closeViewer(true); });
+  /* ---------- Page two: one standalone letter ---------- */
+
+  function postMode(id) {
+    $('profile').hidden = true;
+    var box = $('letter');
+    box.hidden = false;
+    box.appendChild(el('p', 'error', 'Opening letter\u2026'));
+    var want = id.toLowerCase();
+
+    loadPosts().then(function (posts) {
+      var found = null;
+      for (var i = 0; i < posts.length; i++) {
+        if (posts[i].id && posts[i].id.toLowerCase() === want) { found = posts[i]; break; }
+      }
+      box.textContent = '';
+      if (!found) { box.appendChild(el('p', 'error', 'This letter could not be found.')); return; }
+      document.title = found.title || 'A letter';
+      box.appendChild(renderPost(found, true));
+      box.appendChild(el('p', 'sign', '\u2014 Omniletter'));
+    }).catch(function () {
+      box.textContent = '';
+      box.appendChild(el('p', 'error', 'This letter could not be loaded.'));
+    });
+  }
+
+  /* ---------- Start ---------- */
+
+  var id = new URLSearchParams(location.search).get('post');
+  if (id !== null) postMode(id.trim()); else profileMode();
+
+  /*
+    ID helper for the site owner: open the site, open the browser console and run
+        omniletterNewId()
+    It returns a new random ID (browser crypto) that is not used in post.txt yet.
+  */
+  window.omniletterNewId = function () {
+    return loadPosts().then(function (posts) {
+      var used = {};
+      posts.forEach(function (p) { if (p.id) used[p.id.toLowerCase()] = true; });
+      var A = 'abcdefghjkmnpqrstuvwxyz23456789'; // 31 symbols, no look-alike characters
+      for (;;) {
+        var s = '';
+        while (s.length < 12) {
+          var bytes = new Uint8Array(24);
+          crypto.getRandomValues(bytes);
+          for (var i = 0; i < bytes.length && s.length < 12; i++) {
+            if (bytes[i] < 248) s += A.charAt(bytes[i] % 31); // reject biased values
+          }
+        }
+        var nid = 'omniletter-' + s;
+        if (!used[nid]) { console.log(nid); return nid; }
+      }
+    });
+  };
 })();
