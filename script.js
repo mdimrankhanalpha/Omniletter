@@ -4,7 +4,7 @@
     1. Profile page (normal URL). Searching the secret phrase reveals the feed on the same page.
     2. A single standalone letter at  ?post=ID
   Content comes from post.txt: posts are separated by a line containing only "-".
-  The top post in the file is the newest. IDs are automatic: photo file name, or serial number.
+  The top post in the file is the newest. Links are automatic: each post gets a long unguessable code made from its content.
 
   NOTE: the search phrase is a discreet interface feature, NOT security.
   Anyone can read this public file. Random IDs make links hard to guess,
@@ -19,6 +19,9 @@
   // SHA-256 of the phrase, so it is not sitting in plain text (obscurity only, not protection)
   var PHRASE_HASH = 'e3f333a84b62e21100e3b3060450ae1bdd274997cf120ebb8999e6462b0c7694';
 
+  // Secret salt for private link codes. Change it to anything you like, but changing it changes ALL links.
+  var LINK_SALT = 'omniletter-7f3a9c1e5b2d48a6-q8Zr2Lx';
+
   var $ = function (id) { return document.getElementById(id); };
 
   function el(tag, cls, text) {
@@ -32,7 +35,7 @@
 
   // Ordinary github.com/.../blob/... file links become raw file links. Everything else is untouched.
   function rawUrl(u) {
-    var m = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/([^\/]+)\/([^?#]+)(?:[?#].*)?$/i.exec(u);
+    var m = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/(?:blob|raw)\/([^\/]+)\/([^?#]+)(?:[?#].*)?$/i.exec(u);
     return m ? 'https://raw.githubusercontent.com/' + m[1] + '/' + m[2] + '/' + m[3] + '/' + m[4] : u;
   }
 
@@ -88,12 +91,11 @@
       else cur.push(line);
     });
     endPost();                                     // last post needs no trailing divider
-    assignIds(posts);
-    return posts;                                  // file order: top of the file = newest = shown first
+    return assignIds(posts);                       // file order: top of the file = newest = shown first
   }
 
   function parsePost(lines) {
-    var post = { id: '', title: '', date: '', blocks: [] };
+    var post = { id: '', title: '', date: '', blocks: [], raw: lines.join('\n').replace(/\s+/g, ' ').trim() };
     var text = null;
 
     function flush() {
@@ -108,7 +110,7 @@
       var m = KEY.exec(line);
       if (m) {
         var k = m[1].toUpperCase(), v = m[2].trim();
-        if (k === 'ID') { post.id = v; return; }
+        if (k === 'ID') { return; }          // IDs are automatic now; any ID line is ignored
         if (k === 'TITLE') { post.title = v; return; }
         if (k === 'DATE') { post.date = v; return; }
         if (k === 'TEXT') { flush(); text = [m[2]]; return; }
@@ -155,12 +157,27 @@
     return f;
   }
 
+  // Decide what a bare link points to, from its file extension (or YouTube)
+  function urlKind(u) {
+    var path = u.split(/[?#]/)[0];
+    if (/\.(jpe?g|png|gif|webp|avif|bmp|svg)$/i.test(path)) return 'image';
+    if (/\.(mp4|webm|mov|m4v|ogv)$/i.test(path) || ytInfo(u)) return 'video';
+    if (/\.(mp3|m4a|wav|ogg|oga|aac|flac)$/i.test(path)) return 'audio';
+    return '';
+  }
+
   function renderBlock(b) {
     if (b.type === 'text') {
       var frag = document.createDocumentFragment();
       b.text.split(/\n\s*\n/).forEach(function (para) {
+        para = para.trim();
+        var kind = /^https?:\/\/\S+$/i.test(para) ? urlKind(para) : '';
+        if (kind) {                                // a lone photo / video / audio link becomes the real thing
+          frag.appendChild(renderBlock({ type: kind, url: para }));
+          return;
+        }
         var p = el('p');
-        linkify(p, para.trim());
+        linkify(p, para);
         frag.appendChild(p);
       });
       return frag;
@@ -344,8 +361,6 @@
     };
     wrap.appendChild(btn);
     wrap.appendChild(status);
-    // Full ID printed in full (selectable) so it can always be copied by hand
-    wrap.appendChild(el('p', 'pid', id));
     return wrap;
   }
 
@@ -619,46 +634,46 @@
       if (!found) { box.appendChild(el('p', 'error', 'This letter could not be found.')); return; }
       document.title = found.title || 'A letter';
       box.appendChild(renderPost(found, true));
-      box.appendChild(el('p', 'sign', '\u2014 Omniletter'));
     }).catch(function () {
       box.textContent = '';
       box.appendChild(el('p', 'error', 'This letter could not be loaded.'));
     });
   }
 
-  /* ---------- Automatic permanent IDs (no manual work) ---------- */
-  // 1. An "ID:" line in the post, if you ever write one, always wins.
-  // 2. Otherwise a post with a photo uses the photo's file name:  photo.jpg -> ?post=photo
-  // 3. Otherwise (text only) the post's serial number counted from the OLDEST post: 1, 2, 3 ...
-  //    New posts go at the top, so older posts keep their number and their link.
-  // If two posts would get the same ID, the older one keeps it and the newer one gets "-2", "-3"...
+  /* ---------- Automatic private link codes ---------- */
+  // Nothing to write in post.txt. Each post's code is a hash of (secret salt + its own content),
+  // so codes are long, random-looking and cannot be guessed (no 1, 2, 3 or photo names).
+  // The same post always gets the same code, so permanent links keep working.
+  // Editing a post's text changes its code. Adding new posts at the top never changes old codes.
 
-  function slug(str) {
-    return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  function fallbackHash(str) {                       // only used if crypto.subtle is missing
+    var h1 = 0xdeadbeef, h2 = 0x41c6ce57, h3 = 0x1234abcd;
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); h3 = Math.imul(h3 ^ c, 2246822519);
+    }
+    return [h1, h2, h3].map(function (n) { return ('00000000' + (n >>> 0).toString(16)).slice(-8); }).join('');
   }
 
-  function photoName(p) {
-    for (var i = 0; i < p.blocks.length; i++) {
-      var b = p.blocks[i];
-      if (b.type !== 'image' || !b.url) continue;
-      var name = b.url.split(/[?#]/)[0].split('/').pop();
-      try { name = decodeURIComponent(name); } catch (e) { /* keep raw name */ }
-      var s = slug(name.replace(/\.[^.]*$/, ''));
-      if (s) return s;
-    }
-    return '';
+  function hashHex(str) {
+    if (window.crypto && crypto.subtle) return sha256(str);
+    return Promise.resolve(fallbackHash(str));
   }
 
   function assignIds(posts) {
-    var used = {}, total = posts.length;
-    for (var i = total - 1; i >= 0; i--) {          // oldest (bottom of file) first
-      var p = posts[i];
-      var base = p.id || photoName(p) || String(total - i);
-      var id = base, k = 2;
-      while (used[id.toLowerCase()]) id = base + '-' + (k++);
-      used[id.toLowerCase()] = true;
-      p.id = id;
-    }
+    var used = {};
+    return Promise.all(posts.map(function (p) {
+      return hashHex(LINK_SALT + '|' + p.raw);
+    })).then(function (hashes) {
+      // oldest first, so if two posts are identical the older keeps the base code
+      for (var i = posts.length - 1; i >= 0; i--) {
+        var id = hashes[i].slice(0, 24), k = 2;
+        while (used[id]) id = hashes[i].slice(0, 24) + '-' + (k++);
+        used[id] = true;
+        posts[i].id = id;
+      }
+      return posts;
+    });
   }
 
   /* ---------- Start ---------- */
