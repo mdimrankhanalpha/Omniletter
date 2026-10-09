@@ -1,0 +1,131 @@
+/* Omniletter — antique black & white, parchment, charcoal, restrained gold */
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html { -webkit-text-size-adjust: 100%; }
+html.noscroll { overflow: hidden; }
+
+body {
+  margin: 0;
+  background: #fff;
+  color: #22201d;
+  font: 1.0625rem/1.65 Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", serif;
+  overflow-wrap: anywhere;
+}
+body.letters { background: #e6dcc3; }
+
+#app { max-width: 42rem; margin: 0 auto; padding: 0; }
+body.letters #app { padding: 1.25rem 0.8rem 3rem; }
+
+/* masthead (feed only) */
+.mast { text-align: center; margin: 0.5rem 0 1.5rem; }
+.mast img {
+  width: 4.5rem; height: 4.5rem; border-radius: 50%;
+  object-fit: cover; border: 2px solid #8a6d2f;
+  background: #cfc3a4; display: block; margin: 0 auto 0.5rem;
+}
+.mast h1 {
+  margin: 0; font-size: 1.2rem; font-weight: normal;
+  letter-spacing: 0.16em; color: #22201d;
+}
+
+/* a letter */
+.post {
+  background: #f6efdb;
+  border: 1px solid #5e5340;
+  box-shadow: inset 0 0 0 4px #f6efdb, inset 0 0 0 5px #b9a572;
+  padding: 1.6rem 1.2rem 1.1rem;
+}
+.date { margin: 0 0 0.9rem; font-style: italic; font-size: 0.95rem; color: #5b5444; }
+.text { margin: 0 0 1rem; white-space: pre-line; }
+.post a { color: #5c4818; text-decoration-thickness: 1px; text-underline-offset: 0.15em; }
+
+.post-foot {
+  margin-top: 1.1rem; padding-top: 0.8rem;
+  border-top: 1px solid #cdbd93;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+}
+.copy-status { font-size: 0.9rem; color: #5b5444; }
+
+/* dividers between letters */
+.divider {
+  display: flex; align-items: center; gap: 0.75rem;
+  margin: 1.6rem 0; color: #7a5f22; letter-spacing: 0.1em;
+}
+.divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid #a8956a; }
+
+/* buttons */
+.btn {
+  min-height: 44px; padding: 0.5rem 1rem;
+  font: inherit; font-size: 0.95rem; line-height: 1.2;
+  color: #4d3d14; background: transparent;
+  border: 1px solid #7a5f22; border-radius: 2px; cursor: pointer;
+}
+.btn:hover { background: #eadfbd; }
+:focus-visible { outline: 3px solid #22201d; outline-offset: 2px; }
+
+.more-wrap { text-align: center; margin-top: 1.6rem; }
+
+/* media */
+.media { margin: 1.1rem 0; }
+.media figcaption { margin-top: 0.4rem; font-size: 0.9rem; font-style: italic; color: #4a4538; }
+.ext { display: inline-block; margin-top: 0.4rem; font-size: 0.95rem; }
+
+.img-open {
+  display: block; width: fit-content; max-width: 100%;
+  margin: 0 auto; padding: 0; background: #d8cdb0;
+  border: 1px solid #b9a572; cursor: zoom-in;
+}
+.img-open img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+
+.media video {
+  display: block; width: 100%; max-height: 80vh;
+  aspect-ratio: 16 / 9; object-fit: contain; background: #000;
+}
+.media audio { display: block; width: 100%; }
+
+.yt-wrap { max-width: 100%; }
+.media.short .yt-wrap { max-width: 20rem; margin: 0 auto; }
+.yt {
+  position: relative; width: 100%; aspect-ratio: 16 / 9;
+  background: #22201d; display: flex; align-items: center; justify-content: center;
+}
+.media.short .yt { aspect-ratio: 9 / 16; }
+.yt iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+.yt .btn { color: #efe3bd; border-color: #b9954a; }
+.yt .btn:hover { background: #38342c; }
+.yt :focus-visible { outline-color: #efe3bd; }
+
+.file a { font-size: 1rem; }
+.broken { margin: 0.5rem 0; padding: 0.7rem 0.8rem; border: 1px dashed #7b6a45; font-size: 0.95rem; }
+
+.note { margin: 2rem 0; text-align: center; font-size: 0.95rem; color: #5b5444; }
+
+/* image viewer */
+.viewer {
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 50;
+  display: flex; flex-direction: column;
+  background: #12110f; overscroll-behavior: contain;
+}
+.v-stage {
+  position: relative; flex: 1; min-height: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.v-stage img {
+  max-width: 100%; max-height: 100%;
+  transform-origin: center center;
+  -webkit-user-drag: none; user-select: none; will-change: transform;
+}
+.v-bar {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;
+  padding: 0.5rem; background: #1b1a17; border-top: 1px solid #4b4126;
+}
+.v-bar .btn { color: #efe3bd; border-color: #8a6d2f; min-width: 44px; }
+.v-bar .btn:hover { background: #38342c; }
+.v-bar :focus-visible { outline-color: #efe3bd; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
