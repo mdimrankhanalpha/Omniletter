@@ -72,8 +72,19 @@
 
   // A post boundary is a line that is ONLY a hyphen. (The older "(- Post -)" line is still accepted.)
   var DIVIDER = /^(?:-|\s*\(-\s*Post\s*-\))[ \t]*$/i;
-  var KEY = /^\s*(ID|TITLE|DATE|TEXT|IMAGE|VIDEO|AUDIO|FILE|THUMB|CAPTION)\s*:\s?(.*)$/i;
-  var MEDIA = { IMAGE: 'image', VIDEO: 'video', AUDIO: 'audio', FILE: 'file' };
+  var KEY = /^\s*(ID|TITLE|DATE|TEXT|IMAGES?|PHOTOS?|PICTURES?|PICS?|VIDEOS?|AUDIOS?|FILE|THUMB|CAPTION)\s*:\s?(.*)$/i;
+  var MEDIA = { IMAGE: 'image', IMAGES: 'image', PHOTO: 'image', PHOTOS: 'image', PICTURE: 'image', PICTURES: 'image', PIC: 'image', PICS: 'image',
+                VIDEO: 'video', VIDEOS: 'video', AUDIO: 'audio', AUDIOS: 'audio', FILE: 'file' };
+
+  // Find every link on a line. "only" is true when the line holds nothing but links
+  // (separators like spaces, commas, | and markdown ![x](link) are all accepted).
+  var URL_RE = /https?:\/\/[^\s<>"',;|]+/g;
+  function lineUrls(line) {
+    var s = line.trim().replace(/!?\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g, ' $1 ');
+    var urls = (s.match(URL_RE) || []).map(function (u) { return u.replace(/[.:!?)\]]+$/, ''); });
+    var rest = s.replace(URL_RE, ' ').replace(/[\s,;|()<>\[\]]+/g, '');
+    return { urls: urls, only: urls.length > 0 && rest === '' };
+  }
 
   function parsePosts(text) {
     var lines = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
@@ -97,6 +108,7 @@
   function parsePost(lines) {
     var post = { id: '', title: '', date: '', blocks: [], raw: lines.join('\n').replace(/\s+/g, ' ').trim() };
     var text = null;
+    var pending = null;                      // {type, strict}: following bare link lines inherit this media type
 
     function flush() {
       if (text) {
@@ -114,7 +126,16 @@
         if (k === 'TITLE') { post.title = v; return; }
         if (k === 'DATE') { post.date = v; return; }
         if (k === 'TEXT') { flush(); text = [m[2]]; return; }
-        if (MEDIA[k]) { flush(); post.blocks.push({ type: MEDIA[k], url: v }); return; }
+        if (MEDIA[k]) {
+          flush();
+          var li = lineUrls(v);
+          if (li.urls.length > 1 && li.only) {
+            li.urls.forEach(function (u) { post.blocks.push({ type: MEDIA[k], url: u }); });   // several links on one line
+          } else if (v) post.blocks.push({ type: MEDIA[k], url: v });
+          // links on the following lines belong to this key too (IMAGE: then one link per line)
+          pending = { type: MEDIA[k], strict: !v };
+          return;
+        }
         // THUMB / CAPTION belong to the media line just above them
         var b = post.blocks[post.blocks.length - 1];
         if (!text && b && b.type !== 'text') {
@@ -122,6 +143,17 @@
           if (k === 'THUMB' && (b.type === 'image' || b.type === 'video') && !b.thumb) { b.thumb = v; return; }
         }
         // otherwise fall through: keep the line as text rather than dropping it
+      }
+      if (pending && !text) {
+        if (!line.trim()) return;
+        var pl = lineUrls(line);
+        if (pl.only && (pending.strict || pl.urls.every(urlKind))) {
+          pl.urls.forEach(function (u) {
+            post.blocks.push({ type: pending.strict ? pending.type : urlKind(u), url: u });
+          });
+          return;
+        }
+        pending = null;
       }
       if (!text) {
         if (!line.trim()) return;
@@ -170,15 +202,24 @@
     if (b.type === 'text') {
       var frag = document.createDocumentFragment();
       b.text.split(/\n\s*\n/).forEach(function (para) {
-        para = para.trim();
-        var kind = /^https?:\/\/\S+$/i.test(para) ? urlKind(para) : '';
-        if (kind) {                                // a lone photo / video / audio link becomes the real thing
-          frag.appendChild(renderBlock({ type: kind, url: para }));
-          return;
+        var buf = [];
+        function flushText() {
+          var t = buf.join('\n').trim();
+          buf = [];
+          if (!t) return;
+          var p = el('p');
+          linkify(p, t);
+          frag.appendChild(p);
         }
-        var p = el('p');
-        linkify(p, para);
-        frag.appendChild(p);
+        para.split('\n').forEach(function (line) {
+          var li = lineUrls(line);
+          var kinds = li.urls.map(urlKind);
+          if (li.only && kinds.every(Boolean)) {         // line holds only photo/video/audio links
+            flushText();
+            li.urls.forEach(function (u, n) { frag.appendChild(renderBlock({ type: kinds[n], url: u })); });
+          } else buf.push(line);
+        });
+        flushText();
       });
       return frag;
     }
