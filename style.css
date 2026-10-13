@@ -166,7 +166,8 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
 
 /* ---------- Full-screen image viewer: no separate black top strip ---------- */
 .viewer {
-  position: fixed; inset: 0; z-index: 50; display: block;
+  position: fixed; inset: 0; z-index: 2147483000; display: block;
+  width: 100vw; height: 100vh; height: 100dvh;
   overflow: hidden; background: #12110f; color: #eee;
 }
 .v-stage {
@@ -221,7 +222,7 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
   opacity: 0;
   pointer-events: none;
 }
-.v-stage { position: relative; }
+.v-stage { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; overflow: hidden; }
 .v-arrow {
   position: absolute;
   z-index: 2;

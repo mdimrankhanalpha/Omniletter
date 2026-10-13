@@ -746,8 +746,20 @@
       else if (act === 'rotate') rotatePhoto();
       else if (act === 'close') close(true);
       else if (act === 'full') {
-        if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-        else { var pr = reqFs.call(root); if (pr && pr.catch) pr.catch(function () {}); }
+        if (fsElement()) {
+          var exitFs = document.exitFullscreen || document.webkitExitFullscreen;
+          if (exitFs) { var exPromise = exitFs.call(document); if (exPromise && exPromise.catch) exPromise.catch(function () {}); }
+        } else {
+          var enterFs = root.requestFullscreen || root.webkitRequestFullscreen;
+          if (enterFs) {
+            try {
+              var fsPromise = enterFs.call(root);
+              if (fsPromise && fsPromise.then) fsPromise.then(function () { window.requestAnimationFrame(apply); }).catch(function () {});
+              else window.setTimeout(apply, 100);
+            } catch (err) { /* Fullscreen may be unavailable in some embedded browsers. */ }
+          }
+        }
+        showControls(true);
       }
     });
 
@@ -761,7 +773,8 @@
       else if (e.key === '0') { reset(); showControls(true); }
     });
     window.addEventListener('resize', function () { if (!root.hidden) apply(); });
-    document.addEventListener('fullscreenchange', function () { if (!root.hidden) apply(); });
+    document.addEventListener('fullscreenchange', function () { if (!root.hidden) window.requestAnimationFrame(apply); });
+    document.addEventListener('webkitfullscreenchange', function () { if (!root.hidden) window.requestAnimationFrame(apply); });
 
     img.onerror = function () { img.hidden = true; msg.hidden = false; };
 
