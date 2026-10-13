@@ -231,3 +231,17 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
 @media (prefers-reduced-motion: reduce) {
   .v-bar, .v-arrow { transition: none; }
 }
+
+
+/* Remove the unwanted dark horizontal line around the top viewer controls. */
+.viewer .v-bar {
+  border: 0 !important;
+  border-bottom: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+.viewer .v-bar button {
+  border: 0 !important;
+  outline-offset: -2px;
+  box-shadow: none !important;
+}

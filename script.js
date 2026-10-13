@@ -673,6 +673,9 @@
     function ptList() { return Object.keys(pts).map(function (k) { return pts[k]; }); }
 
     stage.addEventListener('pointerdown', function (e) {
+      // Do not capture pointer events from navigation/control buttons: doing so can
+      // retarget mobile clicks and prevent the left/right buttons from firing.
+      if (e.target && e.target.closest && e.target.closest('button')) return;
       try { stage.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       pts[e.pointerId] = { x: e.clientX, y: e.clientY };
       count = Object.keys(pts).length;
@@ -725,7 +728,9 @@
     }, { passive: false });
 
     root.addEventListener('click', function (e) {
-      var act = e.target.getAttribute && e.target.getAttribute('data-act');
+      // Resolve clicks from the button itself or any child inside a button.
+      var control = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+      var act = control ? control.getAttribute('data-act') : null;
       if (act === 'prev') { e.preventDefault(); e.stopPropagation(); movePhoto(-1); }
       else if (act === 'next') { e.preventDefault(); e.stopPropagation(); movePhoto(1); }
       else if (act === 'in') { zoomAt(s * 1.5, 0, 0); showControls(true); }
