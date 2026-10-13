@@ -116,6 +116,17 @@ h1 {
 .imgbtn { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
 .imgbtn img { display: block; width: 100%; height: auto; border: 1px solid var(--line); background: #d9cfb6; }
 
+/* Placeholder while a photo loads: stable layout, and only on-screen photos start loading */
+.imgbtn:not(.ready) { position: relative; overflow: hidden; aspect-ratio: 4 / 3; background: #d9cfb6; border: 1px solid var(--line); }
+.imgbtn:not(.ready) img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; }
+
+/* Photo rows: 2 or 3 side by side, equal height, original proportions (set by script), nothing cropped */
+.media-group { display: flex; gap: 6px; align-items: flex-start; margin: 1.3em 0; }
+.gitem { flex: 1 1 0; min-width: 0; margin: 0; }
+.gitem figure { margin: 0; }
+.gitem .imgbtn:not(.ready) { aspect-ratio: 1 / 1; }
+.gitem figcaption { font-size: .78rem; }
+
 video, audio { display: block; width: 100%; }
 video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: contain; }
 

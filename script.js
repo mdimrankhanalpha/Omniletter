@@ -231,32 +231,159 @@
     return box;
   }
 
+  /* ---------- Fast, priority-aware image loading ----------
+     - Photos on screen load first (high priority); photos just off screen load next,
+       nearest first, a few at a time, so they never fight the one being viewed.
+     - Scrolling far away cancels photos that have not finished, so bandwidth goes to what is watched.
+     - Photos are fetched as small, correctly-sized WebP copies (never upscaled, never cropped).
+       Any failure falls back to the original file. Tapping a photo still opens the original. */
+
+  var PROXY = 'https://wsrv.nl/';
+  var proxyFails = 0;
+  var SIZES = [320, 480, 640, 800, 1000, 1280, 1600];
+  var LIMIT = 3, activeLow = 0, queue = [];
+  var VIS = null, NEAR = null;
+
+  function canResize(u) {
+    return proxyFails < 2 && /^https?:\/\//i.test(u) && !/\.(gif|svg)$/i.test(u.split(/[?#]/)[0]);
+  }
+
+  function resized(u, px) {
+    var w = SIZES[SIZES.length - 1];
+    for (var i = 0; i < SIZES.length; i++) { if (px <= SIZES[i]) { w = SIZES[i]; break; } }
+    return PROXY + '?url=' + encodeURIComponent(u) + '&w=' + w + '&we&output=webp&q=80';
+  }
+
+  function release(s) { if (s.counted) { s.counted = false; activeLow--; } }
+
+  function begin(s) {
+    if (s.state) return;
+    s.state = 1;
+    if (!s.hi) { s.counted = true; activeLow++; }
+    var px = Math.ceil((s.btn.clientWidth || 600) * Math.min(window.devicePixelRatio || 1, 1.5));
+    s.cur = s.thumb || (canResize(s.full) ? resized(s.full, px) : s.full);
+    s.img.setAttribute('fetchpriority', s.hi ? 'high' : 'low');
+    s.img.src = s.cur;
+  }
+
+  function pump() {
+    while (activeLow < LIMIT && queue.length) {
+      var mid = window.innerHeight / 2, bi = 0, bd = Infinity;
+      for (var i = 0; i < queue.length; i++) {
+        var d = Math.abs(queue[i].btn.getBoundingClientRect().top - mid);
+        if (d < bd) { bd = d; bi = i; }
+      }
+      var s = queue.splice(bi, 1)[0];
+      if (!s.state) begin(s);
+    }
+  }
+
+  function want(s, high) {
+    if (s.state === 2) return;
+    if (s.state === 1) {
+      if (high && !s.hi) { s.hi = true; s.img.setAttribute('fetchpriority', 'high'); }
+      return;
+    }
+    if (high) {
+      var q = queue.indexOf(s);
+      if (q >= 0) queue.splice(q, 1);
+      s.hi = true;
+      begin(s);
+    } else if (queue.indexOf(s) < 0) { queue.push(s); pump(); }
+  }
+
+  function dequeue(s) {
+    var q = queue.indexOf(s);
+    if (q >= 0) queue.splice(q, 1);
+    if (s.state === 1 && !s.vis) {            // scrolled far away before it finished: cancel it
+      s.img.removeAttribute('src');
+      release(s);
+      s.state = 0; s.hi = false; s.cur = '';
+      pump();
+    }
+  }
+
+  function settle(s) {
+    if (!s.img.getAttribute('src')) return;
+    release(s);
+    s.state = 2;
+    s.btn.classList.add('ready');
+    var item = s.btn.closest ? s.btn.closest('.gitem') : null;
+    if (item && s.img.naturalWidth && s.img.naturalHeight) {
+      item.style.flexGrow = (s.img.naturalWidth / s.img.naturalHeight).toFixed(4);   // equal-height row, nothing cropped
+    }
+    if (VIS) { VIS.unobserve(s.btn); NEAR.unobserve(s.btn); }
+    pump();
+  }
+
+  function failed(s, wrap) {
+    if (!s.img.getAttribute('src')) return;   // cancelled on purpose
+    if (s.cur !== s.full) {
+      if (s.cur.indexOf(PROXY) === 0) proxyFails++;
+      s.cur = s.full;
+      s.img.src = s.full;                      // fall back to the original file
+      return;
+    }
+    release(s);
+    s.state = 2;
+    if (VIS) { VIS.unobserve(s.btn); NEAR.unobserve(s.btn); }
+    var n = el('div', 'note');
+    n.appendChild(document.createTextNode('Image unavailable. '));
+    var a = el('a', '', 'Open link');
+    a.href = s.full; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    n.appendChild(a);
+    if (s.btn.parentNode === wrap) wrap.replaceChild(n, s.btn);
+    pump();
+  }
+
+  if ('IntersectionObserver' in window) {
+    VIS = new IntersectionObserver(function (entries) {
+      var ins = [];
+      entries.forEach(function (e) {
+        var s = e.target._slot;
+        if (!s) return;
+        s.vis = e.isIntersecting;
+        if (e.isIntersecting) ins.push(e);
+      });
+      ins.sort(function (a, b) { return a.boundingClientRect.top - b.boundingClientRect.top; })
+         .forEach(function (e) { want(e.target._slot, true); });
+    }, { rootMargin: '0px' });
+    NEAR = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var s = e.target._slot;
+        if (!s) return;
+        if (e.isIntersecting) want(s, false); else dequeue(s);
+      });
+    }, { rootMargin: '1500px 0px' });
+  }
+
+  function track(s) {
+    s.btn._slot = s;
+    if (!VIS) { s.hi = true; begin(s); return; }   // very old browser: just load
+    VIS.observe(s.btn);
+    NEAR.observe(s.btn);
+  }
+
   function renderImage(b) {
     var full = cleanUrl(b.url);
     if (!full) return el('div', 'note', 'Image unavailable');
-    var thumb = cleanUrl(b.thumb) || full;
     var wrap = el('div');
     var btn = el('button', 'imgbtn');
     btn.type = 'button';
     btn.setAttribute('aria-label', 'View image full size');
     var img = new Image();
     img.alt = b.caption || 'Image';
-    img.loading = 'lazy';
     img.decoding = 'async';
-    var triedFull = thumb === full;
-    img.onerror = function () {
-      if (!triedFull) { triedFull = true; img.src = full; return; }
-      var n = el('div', 'note');
-      n.appendChild(document.createTextNode('Image unavailable. '));
-      var a = el('a', '', 'Open link');
-      a.href = full; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      n.appendChild(a);
-      wrap.replaceChild(n, btn);
-    };
-    img.src = thumb;
+    var slot = { full: full, thumb: cleanUrl(b.thumb), btn: btn, img: img, state: 0, hi: false, counted: false, vis: false, cur: '' };
+    img.onload = function () { settle(slot); };
+    img.onerror = function () { failed(slot, wrap); };
     btn.appendChild(img);
-    btn.onclick = function () { openViewer(full, thumb, b.caption); };
+    btn.onclick = function () {
+      // show the already-loaded small copy at once, then swap to the original
+      openViewer(full, slot.state === 2 && slot.cur !== full ? slot.cur : '', b.caption);
+    };
     wrap.appendChild(btn);
+    track(slot);
     return withCaption(wrap, b.caption);
   }
 
@@ -405,11 +532,33 @@
     return wrap;
   }
 
+  // Photos that sit one after another become rows of at most 3, side by side, each at its own proportions.
+  // 1 photo stays on its own; 2 or 3 share one row; a 4th starts the next row of the same post.
+  function groupImages(container) {
+    var kids = Array.prototype.slice.call(container.children), run = [];
+    function closeRun() {
+      for (var i = 0; i < run.length; i += 3) {
+        var chunk = run.slice(i, i + 3);
+        if (chunk.length < 2) continue;                  // a lone photo is not grouped
+        var g = el('div', 'media-group n' + chunk.length);
+        container.insertBefore(g, chunk[0]);
+        chunk.forEach(function (box) { box.className = 'gitem'; g.appendChild(box); });
+      }
+      run = [];
+    }
+    kids.forEach(function (k) {
+      if (k.classList && k.classList.contains('media') && k.classList.contains('image')) run.push(k);
+      else closeRun();
+    });
+    closeRun();
+  }
+
   function renderPost(post, isLetter) {
     var art = el('div', 'post');
     if (post.title) art.appendChild(el(isLetter ? 'h1' : 'h2', 'post-title', post.title));
     if (post.date) art.appendChild(el('p', 'post-date', post.date));
     post.blocks.forEach(function (b) { art.appendChild(renderBlock(b)); });
+    groupImages(art);
     if (!isLetter) {
       art.appendChild(copyButton(post.id));
     }
@@ -620,7 +769,13 @@
     var form = $('search'), input = $('q'), msg = $('smsg'), feed = $('feed');
     var revealed = false;
 
-    input.addEventListener('input', function () { msg.textContent = ''; });
+    input.addEventListener('input', function () {
+      msg.textContent = '';
+      // Only when the exact phrase has been typed: start fetching early so the reveal feels instant.
+      // Nothing is requested for any other text, so the hidden page stays hidden.
+      var v = input.value.trim();
+      if (v && window.crypto && crypto.subtle) sha256(v).then(function (h) { if (h === PHRASE_HASH) warm(); });
+    });
 
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -632,6 +787,18 @@
         else { msg.textContent = 'No results for \u201C' + v + '\u201D.'; }
       });
     });
+
+    var warmed = false;
+    function warm() {
+      if (warmed) return;
+      warmed = true;
+      ['https://raw.githubusercontent.com', 'https://wsrv.nl'].forEach(function (h) {
+        var l = document.createElement('link');
+        l.rel = 'preconnect'; l.href = h;
+        document.head.appendChild(l);
+      });
+      loadPosts().catch(function () { /* the real attempt on submit will report it */ });
+    }
 
     function reveal() {
       if (revealed) { input.value = ''; return; }
@@ -645,10 +812,16 @@
       loadPosts().then(function (posts) {
         feed.textContent = '';
         if (!posts.length) { feed.appendChild(el('p', 'error', 'No letters have been delivered yet.')); return; }
-        var frag = document.createDocumentFragment();
-        posts.forEach(function (p) { frag.appendChild(renderPost(p, false)); });
-        feed.appendChild(frag);
-        feed.scrollIntoView();
+        // first posts at once, the rest in small batches so the page never freezes
+        var i = 0;
+        function batch() {
+          var frag = document.createDocumentFragment(), end = Math.min(i + (i === 0 ? 4 : 12), posts.length), first = i === 0;
+          for (; i < end; i++) frag.appendChild(renderPost(posts[i], false));
+          feed.appendChild(frag);
+          if (first && typeof feed.scrollIntoView === 'function') feed.scrollIntoView({ block: 'start', behavior: 'auto' });
+          if (i < posts.length) setTimeout(batch, 0);
+        }
+        batch();
       }).catch(function () {
         feed.textContent = '';
         feed.appendChild(el('p', 'error', 'The letters could not be loaded. Please try again.'));
@@ -669,7 +842,10 @@
     loadPosts().then(function (posts) {
       var found = null;
       for (var i = 0; i < posts.length; i++) {
-        if (posts[i].id && posts[i].id.toLowerCase() === want) { found = posts[i]; break; }
+        var ids = posts[i].ids || [posts[i].id];
+        if (ids.some(function (candidate) { return candidate && candidate.toLowerCase() === want; })) {
+          found = posts[i]; break;
+        }
       }
       box.textContent = '';
       if (!found) { box.appendChild(el('p', 'error', 'This letter could not be found.')); return; }
@@ -702,17 +878,42 @@
   }
 
   function assignIds(posts) {
-    var used = {};
-    return Promise.all(posts.map(function (p) {
-      return hashHex(LINK_SALT + '|' + p.raw);
-    })).then(function (hashes) {
-      // oldest first, so if two posts are identical the older keeps the base code
+    /*
+      Preserve existing SHA-256 IDs on HTTPS and also recognize IDs created by
+      the older non-crypto fallback. Do not rotate LINK_SALT or change the
+      SHA-256 ID format: existing permanent links must continue to resolve.
+    */
+    var input = posts.map(function (p) { return LINK_SALT + '|' + p.raw; });
+    return Promise.all(input.map(function (v) {
+      if (window.crypto && crypto.subtle) return sha256(v);
+      return Promise.resolve(null);
+    })).then(function (shaHashes) {
+      var shaUsed = Object.create(null), fallbackUsed = Object.create(null);
+      var shaIds = new Array(posts.length), fallbackIds = new Array(posts.length);
+
+      // Resolve collisions oldest-first, matching the original collision rule.
       for (var i = posts.length - 1; i >= 0; i--) {
-        var id = hashes[i].slice(0, 24), k = 2;
-        while (used[id]) id = hashes[i].slice(0, 24) + '-' + (k++);
-        used[id] = true;
-        posts[i].id = id;
+        if (shaHashes[i]) {
+          var sh = shaHashes[i].slice(0, 24), sk = 2, sid = sh;
+          while (shaUsed[sid]) sid = sh + '-' + (sk++);
+          shaUsed[sid] = true;
+          shaIds[i] = sid;
+        }
+
+        var fh = fallbackHash(input[i]).slice(0, 24), fk = 2, fid = fh;
+        while (fallbackUsed[fid]) fid = fh + '-' + (fk++);
+        fallbackUsed[fid] = true;
+        fallbackIds[i] = fid;
       }
+
+      posts.forEach(function (post, i) {
+        // SHA-256 stays primary on normal HTTPS hosting, so working links do
+        // not change. Fallback IDs remain primary only where crypto is absent.
+        post.id = shaIds[i] || fallbackIds[i];
+        post.ids = [post.id, shaIds[i], fallbackIds[i]].filter(function (v, n, a) {
+          return !!v && a.indexOf(v) === n;
+        });
+      });
       return posts;
     });
   }
