@@ -164,33 +164,51 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
 .sign { margin: 28px 0 0; text-align: right; font-style: italic; color: var(--muted); }
 .error { margin: 0; padding: 20px 0; text-align: center; color: var(--muted); }
 
-/* ---------- Image viewer ---------- */
+/* ---------- Full-screen image viewer: no separate black top strip ---------- */
 .viewer {
-  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 50;
-  display: flex; flex-direction: column;
-  background: #12110f; color: #eee;
+  position: fixed; inset: 0; z-index: 50; display: block;
+  overflow: hidden; background: #12110f; color: #eee;
 }
-.v-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; padding: 8px; }
-.v-bar button {
-  min-width: 44px; min-height: 40px; padding: 8px 12px;
-  border: 1px solid #55504a; border-radius: 2px;
-  background: #2a2825; color: #eee; font: inherit; font-size: .9rem; cursor: pointer;
+.v-stage {
+  position: absolute; inset: 0; overflow: hidden; touch-action: none;
+  user-select: none; -webkit-user-select: none; cursor: zoom-in;
 }
-.v-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: zoom-in; }
 .v-stage.zoomed { cursor: grab; }
 .v-stage img {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-  object-fit: contain; transform-origin: 50% 50%;
+  position: absolute; top: 50%; left: 50%; width: 100%; height: 100%;
+  object-fit: contain; transform-origin: center center;
   pointer-events: none; -webkit-user-drag: none;
 }
-.v-cap { margin: 0; padding: 8px 14px; text-align: center; font-size: .9rem; font-style: italic; color: #cfc6b0; }
-.v-msg { position: absolute; top: 50%; left: 0; right: 0; margin: 0; text-align: center; color: #cfc6b0; }
-
-@media (min-width: 600px) {
-  body { padding-top: 28px; }
-  .sheet { padding: 36px 40px; }
-  .feed, .letter { padding-left: 40px; padding-right: 40px; }
+.v-bar {
+  position: absolute; z-index: 5; top: max(8px, env(safe-area-inset-top)); left: 8px; right: 8px;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+  padding: 0; border: 0; outline: 0; box-shadow: none; background: transparent;
+  pointer-events: none; transition: opacity .18s ease;
 }
+.v-bar button {
+  pointer-events: auto; min-width: 40px; min-height: 40px; padding: 7px 11px;
+  border: 0; border-radius: 5px; outline: 0; box-shadow: none;
+  background: rgba(25,24,22,.72); color: #eee; font: inherit; font-size: .9rem;
+  cursor: pointer; touch-action: manipulation; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+}
+.v-cap {
+  position: absolute; z-index: 4; left: 12px; right: 12px; bottom: max(8px, env(safe-area-inset-bottom));
+  margin: 0; padding: 8px 14px; text-align: center; font-size: .9rem; font-style: italic;
+  color: #cfc6b0; background: rgba(18,17,15,.55); border: 0; border-radius: 4px;
+}
+.v-msg { position: absolute; top: 50%; left: 0; right: 0; margin: 0; text-align: center; color: #cfc6b0; }
+.v-bar, .v-arrow { transition: opacity .18s ease; }
+.viewer.controls-hidden .v-bar, .viewer.controls-hidden .v-arrow { opacity: 0; pointer-events: none; }
+.v-arrow {
+  position: absolute; z-index: 3; top: 50%; transform: translateY(-50%); display: grid; place-items: center;
+  width: 46px; height: 58px; padding: 0; border: 0; border-radius: 5px;
+  background: rgba(25,24,22,.62); color: #f5eddb; font: inherit; font-size: 1.8rem; line-height: 1;
+  cursor: pointer; touch-action: manipulation;
+}
+.v-prev { left: 10px; } .v-next { right: 10px; }
+.v-arrow:disabled { opacity: .25; cursor: default; }
+.v-arrow[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .v-bar, .v-arrow { transition: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

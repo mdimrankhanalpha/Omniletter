@@ -593,6 +593,7 @@
       '<button type="button" data-act="out" aria-label="Zoom out">\u2212</button>' +
       '<button type="button" data-act="in" aria-label="Zoom in">+</button>' +
       '<button type="button" data-act="reset">Reset</button>' +
+      '<button type="button" data-act="rotate" aria-label="Rotate photo" title="Rotate photo 90 degrees">↻ Rotate</button>' +
       '<button type="button" data-act="full">Fullscreen</button>' +
       '<button type="button" data-act="close">Close</button>' +
       '</div>' +
@@ -610,7 +611,7 @@
     var closeBtn = root.querySelector('[data-act="close"]');
 
     var MAX = 8;
-    var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '';
+    var s = 1, x = 0, y = 0, rotation = 0, token = 0, lastFocus = null, prevOverflow = '';
     var pts = {}, count = 0, moved = false, startX = 0, startY = 0, lastTap = 0, tapX = 0, tapY = 0;
     var gallery = [], galleryIndex = -1, controlsTimer = 0, historyEntry = false, closingFromPop = false;
 
@@ -620,6 +621,7 @@
 
     function clamp() {
       var nw = img.naturalWidth || 1, nh = img.naturalHeight || 1;
+      if (rotation % 180) { var swap = nw; nw = nh; nh = swap; }
       var f = Math.min(stage.clientWidth / nw, stage.clientHeight / nh);
       var mx = Math.max(0, (nw * f * s - stage.clientWidth) / 2);
       var my = Math.max(0, (nh * f * s - stage.clientHeight) / 2);
@@ -628,7 +630,11 @@
     }
     function apply() {
       clamp();
-      img.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
+      var sw = stage.clientWidth || window.innerWidth;
+      var sh = stage.clientHeight || window.innerHeight;
+      img.style.width = (rotation % 180 ? sh : sw) + 'px';
+      img.style.height = (rotation % 180 ? sw : sh) + 'px';
+      img.style.transform = 'translate(-50%, -50%) translate(' + x + 'px,' + y + 'px) rotate(' + rotation + 'deg) scale(' + s + ')';
       stage.classList.toggle('zoomed', s > 1);
     }
     // cx, cy are relative to the stage centre
@@ -646,6 +652,7 @@
       return { x: px - r.left - r.width / 2, y: py - r.top - r.height / 2 };
     }
     function reset() { s = 1; x = 0; y = 0; apply(); }
+    function rotatePhoto() { rotation = (rotation + 90) % 360; x = 0; y = 0; s = 1; apply(); showControls(true); }
     function showControls(show) {
       root.classList.toggle('controls-hidden', !show);
       window.clearTimeout(controlsTimer);
@@ -736,6 +743,7 @@
       else if (act === 'in') { zoomAt(s * 1.5, 0, 0); showControls(true); }
       else if (act === 'out') { zoomAt(s / 1.5, 0, 0); showControls(true); }
       else if (act === 'reset') { reset(); showControls(true); }
+      else if (act === 'rotate') rotatePhoto();
       else if (act === 'close') close(true);
       else if (act === 'full') {
         if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
@@ -779,8 +787,9 @@
         pts = {}; count = 0; lastTap = 0;
         gallery = items || []; galleryIndex = idx == null ? -1 : idx;
         if (galleryIndex < 0 || !gallery[galleryIndex]) { gallery = [{ full: full, thumb: thumb, caption: caption }]; galleryIndex = 0; }
-        s = 1; x = 0; y = 0;
+        s = 1; x = 0; y = 0; rotation = 0;
         img.style.transform = '';
+        img.style.width = ''; img.style.height = '';
         img.hidden = false; msg.hidden = true;
         img.alt = caption || 'Image';
         cap.textContent = caption || '';
