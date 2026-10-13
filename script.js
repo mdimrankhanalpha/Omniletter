@@ -378,9 +378,18 @@
     img.onload = function () { settle(slot); };
     img.onerror = function () { failed(slot, wrap); };
     btn.appendChild(img);
+    btn._imageSlot = slot;
+    btn._imageCaption = b.caption || '';
     btn.onclick = function () {
-      // show the already-loaded small copy at once, then swap to the original
-      openViewer(full, slot.state === 2 && slot.cur !== full ? slot.cur : '', b.caption);
+      // Photos in the same post form a gallery; navigation never changes the post URL.
+      var post = btn.closest('.post');
+      var buttons = post ? Array.prototype.slice.call(post.querySelectorAll('.imgbtn')) : [btn];
+      var gallery = buttons.map(function (button) {
+        var item = button._imageSlot;
+        return item ? { full: item.full, thumb: item.state === 2 && item.cur !== item.full ? item.cur : '', caption: button._imageCaption || '' } : null;
+      }).filter(Boolean);
+      var index = buttons.indexOf(btn);
+      openViewer(full, slot.state === 2 && slot.cur !== full ? slot.cur : '', b.caption, gallery, Math.max(0, index));
     };
     wrap.appendChild(btn);
     track(slot);
@@ -555,13 +564,11 @@
 
   function renderPost(post, isLetter) {
     var art = el('div', 'post');
+    art.appendChild(copyButton(post.id));
     if (post.title) art.appendChild(el(isLetter ? 'h1' : 'h2', 'post-title', post.title));
     if (post.date) art.appendChild(el('p', 'post-date', post.date));
     post.blocks.forEach(function (b) { art.appendChild(renderBlock(b)); });
     groupImages(art);
-    if (!isLetter) {
-      art.appendChild(copyButton(post.id));
-    }
     return art;
   }
 
@@ -569,9 +576,9 @@
 
   var viewer = null;
 
-  function openViewer(full, thumb, caption) {
+  function openViewer(full, thumb, caption, gallery, index) {
     if (!viewer) viewer = buildViewer();
-    viewer.show(full, thumb, caption);
+    viewer.show(full, thumb, caption, gallery || [{ full: full, thumb: thumb, caption: caption || '' }], index || 0);
   }
 
   function buildViewer() {
@@ -582,6 +589,8 @@
     root.setAttribute('aria-label', 'Image viewer');
     root.innerHTML =
       '<div class="v-bar">' +
+      '<button type="button" data-act="prev" aria-label="Previous photo">‹</button>' +
+      '<button type="button" data-act="next" aria-label="Next photo">›</button>' +
       '<button type="button" data-act="out" aria-label="Zoom out">\u2212</button>' +
       '<button type="button" data-act="in" aria-label="Zoom in">+</button>' +
       '<button type="button" data-act="reset">Reset</button>' +
@@ -600,6 +609,7 @@
     var closeBtn = root.querySelector('[data-act="close"]');
 
     var MAX = 8;
+    var gallery = [], galleryIndex = 0;
     var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '';
     var pts = {}, count = 0, moved = false, startX = 0, startY = 0, lastTap = 0, tapX = 0, tapY = 0;
 
@@ -695,6 +705,8 @@
       if (act === 'in') zoomAt(s * 1.5, 0, 0);
       else if (act === 'out') zoomAt(s / 1.5, 0, 0);
       else if (act === 'reset') reset();
+      else if (act === 'prev') changePhoto(-1);
+      else if (act === 'next') changePhoto(1);
       else if (act === 'close') close();
       else if (act === 'full') {
         if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
@@ -705,6 +717,8 @@
     document.addEventListener('keydown', function (e) {
       if (root.hidden) return;
       if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowLeft') changePhoto(-1);
+      else if (e.key === 'ArrowRight') changePhoto(1);
       else if (e.key === '+' || e.key === '=') zoomAt(s * 1.5, 0, 0);
       else if (e.key === '-') zoomAt(s / 1.5, 0, 0);
       else if (e.key === '0') reset();
@@ -713,6 +727,19 @@
     document.addEventListener('fullscreenchange', function () { if (!root.hidden) apply(); });
 
     img.onerror = function () { img.hidden = true; msg.hidden = false; };
+
+    function changePhoto(step) {
+      if (!gallery.length || gallery.length < 2) return;
+      galleryIndex = (galleryIndex + step + gallery.length) % gallery.length;
+      var item = gallery[galleryIndex];
+      reset(); token++; img.hidden = false; msg.hidden = true;
+      img.alt = item.caption || 'Image'; cap.textContent = item.caption || ''; cap.hidden = !item.caption;
+      var my = token;
+      if (item.thumb && item.thumb !== item.full) { img.src = item.thumb; var hi = new Image(); hi.onload = function () { if (my === token) img.src = item.full; }; hi.src = item.full; }
+      else img.src = item.full;
+      root.querySelector('[data-act="prev"]').hidden = gallery.length < 2;
+      root.querySelector('[data-act="next"]').hidden = gallery.length < 2;
+    }
 
     function close() {
       if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
@@ -724,7 +751,11 @@
     }
 
     return {
-      show: function (full, thumb, caption) {
+      show: function (full, thumb, caption, items, index) {
+        gallery = items || [{ full: full, thumb: thumb, caption: caption || '' }];
+        galleryIndex = index || 0;
+        root.querySelector('[data-act="prev"]').hidden = gallery.length < 2;
+        root.querySelector('[data-act="next"]').hidden = gallery.length < 2;
         lastFocus = document.activeElement;
         prevOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';

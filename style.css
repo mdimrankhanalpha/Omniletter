@@ -144,7 +144,8 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
 .note { padding: 14px; border: 1px dashed var(--line); background: var(--card); color: var(--muted); font-size: .9rem; text-align: center; }
 .filelink { display: block; padding: 12px 14px; border: 1px solid var(--line); background: var(--card); overflow-wrap: anywhere; }
 
-.post-foot { margin-top: 20px; }
+.post-foot { margin: 0 0 18px; }
+.letter .post-foot { margin: 0 0 22px; }
 .copy {
   padding: 8px 14px;
   border: 1px solid var(--char);
@@ -176,6 +177,7 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
   border: 1px solid #55504a; border-radius: 2px;
   background: #2a2825; color: #eee; font: inherit; font-size: .9rem; cursor: pointer;
 }
+.v-bar button[data-act="prev"], .v-bar button[data-act="next"] { min-width: 46px; font-size: 1.6rem; line-height: 1; }
 .v-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: zoom-in; }
 .v-stage.zoomed { cursor: grab; }
 .v-stage img {
