@@ -374,22 +374,13 @@
     var img = new Image();
     img.alt = b.caption || 'Image';
     img.decoding = 'async';
-    var slot = { full: full, thumb: cleanUrl(b.thumb), btn: btn, img: img, state: 0, hi: false, counted: false, vis: false, cur: '' };
+    var slot = { full: full, thumb: cleanUrl(b.thumb), caption: b.caption || '', btn: btn, img: img, state: 0, hi: false, counted: false, vis: false, cur: '' };
     img.onload = function () { settle(slot); };
     img.onerror = function () { failed(slot, wrap); };
     btn.appendChild(img);
-    btn._imageSlot = slot;
-    btn._imageCaption = b.caption || '';
     btn.onclick = function () {
-      // Photos in the same post form a gallery; navigation never changes the post URL.
-      var post = btn.closest('.post');
-      var buttons = post ? Array.prototype.slice.call(post.querySelectorAll('.imgbtn')) : [btn];
-      var gallery = buttons.map(function (button) {
-        var item = button._imageSlot;
-        return item ? { full: item.full, thumb: item.state === 2 && item.cur !== item.full ? item.cur : '', caption: button._imageCaption || '' } : null;
-      }).filter(Boolean);
-      var index = buttons.indexOf(btn);
-      openViewer(full, slot.state === 2 && slot.cur !== full ? slot.cur : '', b.caption, gallery, Math.max(0, index));
+      // show the already-loaded small copy at once, then swap to the original
+      openViewer(full, slot.state === 2 && slot.cur !== full ? slot.cur : '', b.caption, btn);
     };
     wrap.appendChild(btn);
     track(slot);
@@ -564,13 +555,13 @@
 
   function renderPost(post, isLetter) {
     var art = el('div', 'post');
-    // Permanent-link pages show only the requested post and its media;
-    // copy controls belong only to the private homepage/feed.
-    if (!isLetter) art.appendChild(copyButton(post.id));
     if (post.title) art.appendChild(el(isLetter ? 'h1' : 'h2', 'post-title', post.title));
     if (post.date) art.appendChild(el('p', 'post-date', post.date));
     post.blocks.forEach(function (b) { art.appendChild(renderBlock(b)); });
     groupImages(art);
+    if (!isLetter) {
+      art.appendChild(copyButton(post.id));
+    }
     return art;
   }
 
@@ -578,9 +569,17 @@
 
   var viewer = null;
 
-  function openViewer(full, thumb, caption, gallery, index) {
+  function openViewer(full, thumb, caption, sourceButton) {
     if (!viewer) viewer = buildViewer();
-    viewer.show(full, thumb, caption, gallery || [{ full: full, thumb: thumb, caption: caption || '' }], index || 0);
+    var items = [];
+    var post = sourceButton && sourceButton.closest ? sourceButton.closest('.post') : null;
+    if (post) {
+      Array.prototype.forEach.call(post.querySelectorAll('.imgbtn'), function (button) {
+        if (button._slot && button._slot.full) items.push({ full: button._slot.full, thumb: button._slot.state === 2 && button._slot.cur !== button._slot.full ? button._slot.cur : '', caption: button._slot.caption || '', button: button });
+      });
+    }
+    var index = items.findIndex(function (item) { return item.button === sourceButton; });
+    viewer.show(full, thumb, caption, items, index);
   }
 
   function buildViewer() {
@@ -590,19 +589,14 @@
     root.setAttribute('aria-modal', 'true');
     root.setAttribute('aria-label', 'Image viewer');
     root.innerHTML =
-      '<button class="v-side v-prev" type="button" data-act="prev" aria-label="Previous photo">‹</button>' +
-      '<button class="v-side v-next" type="button" data-act="next" aria-label="Next photo">›</button>' +
-      '<button class="v-menu-toggle" type="button" data-act="menu" aria-expanded="false">Photo options ☰</button>' +
-      '<div class="v-bar" hidden>' +
-      '<button type="button" data-act="rotate">Rotate 90°</button>' +
-      '<button type="button" data-act="reading">Reading: Off</button>' +
-      '<button type="button" data-act="dark">Dark mode: Off</button>' +
+      '<div class="v-bar">' +
+      '<button type="button" data-act="out" aria-label="Zoom out">\u2212</button>' +
+      '<button type="button" data-act="in" aria-label="Zoom in">+</button>' +
       '<button type="button" data-act="reset">Reset</button>' +
       '<button type="button" data-act="full">Fullscreen</button>' +
       '<button type="button" data-act="close">Close</button>' +
       '</div>' +
-      '<div class="v-stage"><img alt="" draggable="false"><p class="v-msg" hidden>Image unavailable</p></div>' +
-      '<div class="v-bottom"><button type="button" data-act="out" aria-label="Zoom out">−</button><button type="button" data-act="in" aria-label="Zoom in">+</button></div>' +
+      '<div class="v-stage"><button type="button" class="v-arrow v-prev" data-act="prev" aria-label="Previous photo">&#8592;</button><img alt="" draggable="false"><button type="button" class="v-arrow v-next" data-act="next" aria-label="Next photo">&#8594;</button><p class="v-msg" hidden>Image unavailable</p></div>' +
       '<p class="v-cap" hidden></p>';
     document.body.appendChild(root);
 
@@ -611,16 +605,14 @@
     var msg = root.querySelector('.v-msg');
     var cap = root.querySelector('.v-cap');
     var fsBtn = root.querySelector('[data-act="full"]');
+    var prevBtn = root.querySelector('[data-act="prev"]');
+    var nextBtn = root.querySelector('[data-act="next"]');
     var closeBtn = root.querySelector('[data-act="close"]');
 
     var MAX = 8;
-    var gallery = [], galleryIndex = 0, photoStates = Object.create(null);
-    function stateKey() { return galleryIndex; }
-    function savePhotoState() { photoStates[stateKey()] = { rotation: rotation, reading: reading, dark: dark, s: s, x: x, y: y }; }
-    function restorePhotoState() { var st = photoStates[stateKey()]; rotation = st ? st.rotation : 0; reading = st ? st.reading : false; dark = st ? st.dark : false; s = st ? st.s : 1; x = st ? st.x : 0; y = st ? st.y : 0; }
-    var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '', rotation = 0, reading = false, dark = false, controlsHidden = false;
+    var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '';
     var pts = {}, count = 0, moved = false, startX = 0, startY = 0, lastTap = 0, tapX = 0, tapY = 0;
-    var viewerHistoryOpen = false, closingFromPopstate = false;
+    var gallery = [], galleryIndex = -1, controlsTimer = 0, historyEntry = false, closingFromPop = false;
 
     var reqFs = root.requestFullscreen || root.webkitRequestFullscreen;
     if (!reqFs) fsBtn.hidden = true;
@@ -636,17 +628,7 @@
     }
     function apply() {
       clamp();
-      img.style.transform = 'translate(' + x + 'px,' + y + 'px) rotate(' + rotation + 'deg) scale(' + s + ')';
-      // Fit the complete image inside the viewer even after a 90°/270° rotation.
-      var sw = stage.clientWidth || 1, sh = stage.clientHeight || 1;
-      var nw = img.naturalWidth || sw, nh = img.naturalHeight || sh;
-      var sideways = Math.abs(rotation % 180) === 90;
-      var boxW = sideways ? sh : sw, boxH = sideways ? sw : sh;
-      var fit = Math.min(boxW / nw, boxH / nh);
-      img.style.width = Math.max(1, nw * fit) + 'px';
-      img.style.height = Math.max(1, nh * fit) + 'px';
-      img.style.filter = (reading ? 'brightness(1.22) contrast(1.5) ' : '') + (dark ? 'invert(1) hue-rotate(180deg)' : '');
-      root.classList.toggle('controls-hidden', controlsHidden);
+      img.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
       stage.classList.toggle('zoomed', s > 1);
     }
     // cx, cy are relative to the stage centre
@@ -664,6 +646,29 @@
       return { x: px - r.left - r.width / 2, y: py - r.top - r.height / 2 };
     }
     function reset() { s = 1; x = 0; y = 0; apply(); }
+    function showControls(show) {
+      root.classList.toggle('controls-hidden', !show);
+      window.clearTimeout(controlsTimer);
+      if (show && !root.hidden) controlsTimer = window.setTimeout(function () { root.classList.add('controls-hidden'); }, 2600);
+    }
+    function setPhoto(item, idx) {
+      if (!item) return;
+      galleryIndex = idx; reset(); img.hidden = false; msg.hidden = true;
+      cap.textContent = item.caption || ''; cap.hidden = !item.caption; img.alt = item.caption || 'Image';
+      var my = ++token;
+      if (item.thumb && item.thumb !== item.full) {
+        img.src = item.thumb; var hi = new Image();
+        hi.onload = function () { if (my === token) img.src = item.full; };
+        hi.onerror = function () { if (my === token) img.src = item.full; }; hi.src = item.full;
+      } else img.src = item.full;
+      prevBtn.hidden = gallery.length < 2; nextBtn.hidden = gallery.length < 2;
+      prevBtn.disabled = galleryIndex <= 0; nextBtn.disabled = galleryIndex >= gallery.length - 1;
+    }
+    function movePhoto(delta) {
+      var next = galleryIndex + delta;
+      if (next < 0 || next >= gallery.length) return;
+      setPhoto(gallery[next], next); showControls(true);
+    }
     function hyp(a, b) { return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2)); }
     function ptList() { return Object.keys(pts).map(function (k) { return pts[k]; }); }
 
@@ -707,7 +712,7 @@
           var c = rel(e.clientX, e.clientY);
           zoomAt(s > 1 ? 1 : 2.5, c.x, c.y);   // double-tap / double-click
           lastTap = 0;
-        } else { lastTap = now; tapX = e.clientX; tapY = e.clientY; }
+        } else { lastTap = now; tapX = e.clientX; tapY = e.clientY; showControls(root.classList.contains('controls-hidden')); }
       }
     }
     stage.addEventListener('pointerup', up);
@@ -721,89 +726,54 @@
 
     root.addEventListener('click', function (e) {
       var act = e.target.getAttribute && e.target.getAttribute('data-act');
-      if (act === 'in') zoomAt(s * 1.5, 0, 0);
-      else if (act === 'out') zoomAt(s / 1.5, 0, 0);
-      else if (act === 'reset') { reset(); rotation = 0; reading = false; dark = false; updateFilterButtons(); apply(); }
-      else if (act === 'menu') { var bar = root.querySelector('.v-bar'); bar.hidden = !bar.hidden; e.target.setAttribute('aria-expanded', String(!bar.hidden)); }
-      else if (act === 'rotate') { rotation = (rotation + 90) % 360; reset(); apply(); }
-      else if (act === 'reading') { reading = !reading; updateFilterButtons(); apply(); }
-      else if (act === 'dark') { dark = !dark; updateFilterButtons(); apply(); }
-      else if (e.target === img || e.target === stage) { controlsHidden = !controlsHidden; apply(); }
-      else if (act === 'prev') changePhoto(-1);
-      else if (act === 'next') changePhoto(1);
-      else if (act === 'close') close();
+      if (act === 'prev') { e.preventDefault(); e.stopPropagation(); movePhoto(-1); }
+      else if (act === 'next') { e.preventDefault(); e.stopPropagation(); movePhoto(1); }
+      else if (act === 'in') { zoomAt(s * 1.5, 0, 0); showControls(true); }
+      else if (act === 'out') { zoomAt(s / 1.5, 0, 0); showControls(true); }
+      else if (act === 'reset') { reset(); showControls(true); }
+      else if (act === 'close') close(true);
       else if (act === 'full') {
         if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
         else { var pr = reqFs.call(root); if (pr && pr.catch) pr.catch(function () {}); }
       }
     });
 
-    window.addEventListener('popstate', function () {
-      if (!root.hidden) {
-        closingFromPopstate = true;
-        viewerHistoryOpen = false;
-        close();
-        closingFromPopstate = false;
-      }
-    });
-
     document.addEventListener('keydown', function (e) {
       if (root.hidden) return;
-      if (e.key === 'Escape') close();
-      else if (e.key === 'ArrowLeft') changePhoto(-1);
-      else if (e.key === 'ArrowRight') changePhoto(1);
-      else if (e.key === '+' || e.key === '=') zoomAt(s * 1.5, 0, 0);
-      else if (e.key === '-') zoomAt(s / 1.5, 0, 0);
-      else if (e.key === '0') reset();
+      if (e.key === 'Escape') close(true);
+      else if (e.key === 'ArrowLeft') movePhoto(-1);
+      else if (e.key === 'ArrowRight') movePhoto(1);
+      else if (e.key === '+' || e.key === '=') { zoomAt(s * 1.5, 0, 0); showControls(true); }
+      else if (e.key === '-') { zoomAt(s / 1.5, 0, 0); showControls(true); }
+      else if (e.key === '0') { reset(); showControls(true); }
     });
     window.addEventListener('resize', function () { if (!root.hidden) apply(); });
     document.addEventListener('fullscreenchange', function () { if (!root.hidden) apply(); });
 
     img.onerror = function () { img.hidden = true; msg.hidden = false; };
 
-    function updateFilterButtons() {
-      root.querySelector('[data-act="reading"]').textContent = 'Reading: ' + (reading ? 'On' : 'Off');
-      root.querySelector('[data-act="dark"]').textContent = 'Dark mode: ' + (dark ? 'On' : 'Off');
-    }
-
-    function changePhoto(step) {
-      if (!gallery.length || gallery.length < 2) return;
-      savePhotoState();
-      galleryIndex = (galleryIndex + step + gallery.length) % gallery.length;
-      restorePhotoState();
-      var item = gallery[galleryIndex];
-      controlsHidden = false; updateFilterButtons(); token++; img.hidden = false; msg.hidden = true;
-      img.alt = item.caption || 'Image'; cap.textContent = item.caption || ''; cap.hidden = !item.caption;
-      var my = token;
-      img.src = item.full;
-      root.querySelector('[data-act="prev"]').hidden = gallery.length < 2;
-      root.querySelector('[data-act="next"]').hidden = gallery.length < 2;
-    }
-
-    function close() {
+    function close(useHistory) {
       if (root.hidden) return;
-      if (viewerHistoryOpen && !closingFromPopstate) {
-        viewerHistoryOpen = false;
-        history.back();
-      }
-      if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-      root.hidden = true;
-      token++;
-      img.removeAttribute('src');
+      if (useHistory && historyEntry && !closingFromPop) { history.back(); return; }
+      if (fsElement()) { var ex = document.exitFullscreen || document.webkitExitFullscreen; if (ex) ex.call(document); }
+      root.hidden = true; historyEntry = false; closingFromPop = false;
+      window.clearTimeout(controlsTimer); root.classList.remove('controls-hidden');
+      token++; img.removeAttribute('src');
       document.body.style.overflow = prevOverflow;
       if (lastFocus && lastFocus.focus) lastFocus.focus();
     }
+    window.addEventListener('popstate', function () {
+      if (!root.hidden && historyEntry) { closingFromPop = true; close(false); }
+    });
 
     return {
-      show: function (full, thumb, caption, items, index) {
-        gallery = items || [{ full: full, thumb: thumb, caption: caption || '' }];
-        galleryIndex = index || 0;
-        root.querySelector('[data-act="prev"]').hidden = gallery.length < 2;
-        root.querySelector('[data-act="next"]').hidden = gallery.length < 2;
+      show: function (full, thumb, caption, items, idx) {
         lastFocus = document.activeElement;
         prevOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
-        pts = {}; count = 0; lastTap = 0; photoStates = Object.create(null); rotation = 0; reading = false; dark = false; controlsHidden = false; updateFilterButtons();
+        pts = {}; count = 0; lastTap = 0;
+        gallery = items || []; galleryIndex = idx == null ? -1 : idx;
+        if (galleryIndex < 0 || !gallery[galleryIndex]) { gallery = [{ full: full, thumb: thumb, caption: caption }]; galleryIndex = 0; }
         s = 1; x = 0; y = 0;
         img.style.transform = '';
         img.hidden = false; msg.hidden = true;
@@ -811,14 +781,11 @@
         cap.textContent = caption || '';
         cap.hidden = !caption;
         root.hidden = false;
-        // Make the phone/browser Back button close the viewer first, returning
-        // to the same post instead of leaving the website.
-        if (!viewerHistoryOpen) {
-          try { history.pushState({ omniletterViewer: true }, '', location.href); viewerHistoryOpen = true; } catch (e) {}
-        }
         var my = ++token;
-        // The viewer always loads the original URL directly, never a resized thumbnail.
-        img.src = full;
+        if (!historyEntry) {
+          try { history.pushState(Object.assign({}, history.state || {}, { __omniletterViewer: true }), '', location.href); historyEntry = true; } catch (err) { historyEntry = false; }
+        }
+        setPhoto(gallery[galleryIndex], galleryIndex); showControls(true);
         closeBtn.focus();
       }
     };
