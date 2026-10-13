@@ -614,7 +614,10 @@
     var closeBtn = root.querySelector('[data-act="close"]');
 
     var MAX = 8;
-    var gallery = [], galleryIndex = 0;
+    var gallery = [], galleryIndex = 0, photoStates = Object.create(null);
+    function stateKey() { return galleryIndex; }
+    function savePhotoState() { photoStates[stateKey()] = { rotation: rotation, reading: reading, dark: dark, s: s, x: x, y: y }; }
+    function restorePhotoState() { var st = photoStates[stateKey()]; rotation = st ? st.rotation : 0; reading = st ? st.reading : false; dark = st ? st.dark : false; s = st ? st.s : 1; x = st ? st.x : 0; y = st ? st.y : 0; }
     var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '', rotation = 0, reading = false, dark = false, controlsHidden = false;
     var pts = {}, count = 0, moved = false, startX = 0, startY = 0, lastTap = 0, tapX = 0, tapY = 0;
     var viewerHistoryOpen = false, closingFromPopstate = false;
@@ -634,6 +637,14 @@
     function apply() {
       clamp();
       img.style.transform = 'translate(' + x + 'px,' + y + 'px) rotate(' + rotation + 'deg) scale(' + s + ')';
+      // Fit the complete image inside the viewer even after a 90°/270° rotation.
+      var sw = stage.clientWidth || 1, sh = stage.clientHeight || 1;
+      var nw = img.naturalWidth || sw, nh = img.naturalHeight || sh;
+      var sideways = Math.abs(rotation % 180) === 90;
+      var boxW = sideways ? sh : sw, boxH = sideways ? sw : sh;
+      var fit = Math.min(boxW / nw, boxH / nh);
+      img.style.width = Math.max(1, nw * fit) + 'px';
+      img.style.height = Math.max(1, nh * fit) + 'px';
       img.style.filter = (reading ? 'brightness(1.22) contrast(1.5) ' : '') + (dark ? 'invert(1) hue-rotate(180deg)' : '');
       root.classList.toggle('controls-hidden', controlsHidden);
       stage.classList.toggle('zoomed', s > 1);
@@ -717,7 +728,7 @@
       else if (act === 'rotate') { rotation = (rotation + 90) % 360; reset(); apply(); }
       else if (act === 'reading') { reading = !reading; updateFilterButtons(); apply(); }
       else if (act === 'dark') { dark = !dark; updateFilterButtons(); apply(); }
-      else if (e.target === img) { controlsHidden = !controlsHidden; apply(); }
+      else if (e.target === img || e.target === stage) { controlsHidden = !controlsHidden; apply(); }
       else if (act === 'prev') changePhoto(-1);
       else if (act === 'next') changePhoto(1);
       else if (act === 'close') close();
@@ -757,9 +768,11 @@
 
     function changePhoto(step) {
       if (!gallery.length || gallery.length < 2) return;
+      savePhotoState();
       galleryIndex = (galleryIndex + step + gallery.length) % gallery.length;
+      restorePhotoState();
       var item = gallery[galleryIndex];
-      reset(); rotation = 0; reading = false; dark = false; controlsHidden = false; updateFilterButtons(); token++; img.hidden = false; msg.hidden = true;
+      controlsHidden = false; updateFilterButtons(); token++; img.hidden = false; msg.hidden = true;
       img.alt = item.caption || 'Image'; cap.textContent = item.caption || ''; cap.hidden = !item.caption;
       var my = token;
       if (item.thumb && item.thumb !== item.full) { img.src = item.thumb; var hi = new Image(); hi.onload = function () { if (my === token) img.src = item.full; }; hi.src = item.full; }
@@ -791,7 +804,7 @@
         lastFocus = document.activeElement;
         prevOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
-        pts = {}; count = 0; lastTap = 0; rotation = 0; reading = false; dark = false; controlsHidden = false; updateFilterButtons();
+        pts = {}; count = 0; lastTap = 0; photoStates = Object.create(null); rotation = 0; reading = false; dark = false; controlsHidden = false; updateFilterButtons();
         s = 1; x = 0; y = 0;
         img.style.transform = '';
         img.hidden = false; msg.hidden = true;
