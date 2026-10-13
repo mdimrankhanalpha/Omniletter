@@ -564,7 +564,9 @@
 
   function renderPost(post, isLetter) {
     var art = el('div', 'post');
-    art.appendChild(copyButton(post.id));
+    // Permanent-link pages show only the requested post and its media;
+    // copy controls belong only to the private homepage/feed.
+    if (!isLetter) art.appendChild(copyButton(post.id));
     if (post.title) art.appendChild(el(isLetter ? 'h1' : 'h2', 'post-title', post.title));
     if (post.date) art.appendChild(el('p', 'post-date', post.date));
     post.blocks.forEach(function (b) { art.appendChild(renderBlock(b)); });
@@ -615,6 +617,7 @@
     var gallery = [], galleryIndex = 0;
     var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '', rotation = 0, reading = false, dark = false, controlsHidden = false;
     var pts = {}, count = 0, moved = false, startX = 0, startY = 0, lastTap = 0, tapX = 0, tapY = 0;
+    var viewerHistoryOpen = false, closingFromPopstate = false;
 
     var reqFs = root.requestFullscreen || root.webkitRequestFullscreen;
     if (!reqFs) fsBtn.hidden = true;
@@ -724,6 +727,15 @@
       }
     });
 
+    window.addEventListener('popstate', function () {
+      if (!root.hidden) {
+        closingFromPopstate = true;
+        viewerHistoryOpen = false;
+        close();
+        closingFromPopstate = false;
+      }
+    });
+
     document.addEventListener('keydown', function (e) {
       if (root.hidden) return;
       if (e.key === 'Escape') close();
@@ -757,6 +769,11 @@
     }
 
     function close() {
+      if (root.hidden) return;
+      if (viewerHistoryOpen && !closingFromPopstate) {
+        viewerHistoryOpen = false;
+        history.back();
+      }
       if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
       root.hidden = true;
       token++;
@@ -782,6 +799,11 @@
         cap.textContent = caption || '';
         cap.hidden = !caption;
         root.hidden = false;
+        // Make the phone/browser Back button close the viewer first, returning
+        // to the same post instead of leaving the website.
+        if (!viewerHistoryOpen) {
+          try { history.pushState({ omniletterViewer: true }, '', location.href); viewerHistoryOpen = true; } catch (e) {}
+        }
         var my = ++token;
         if (thumb && thumb !== full) {
           // show the small one at once, swap in the full-size one when it has loaded
