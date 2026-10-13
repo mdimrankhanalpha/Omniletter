@@ -219,7 +219,7 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
 .viewer.controls-hidden .v-cap,
 .viewer.controls-hidden .v-side { display: none !important; }
 .viewer.controls-hidden .v-stage { position: absolute; inset: 0; }
-.viewer.controls-hidden .v-stage img { object-fit: contain; }
+.viewer.controls-hidden .v-stage img { object-fit: contain; image-rendering: auto; }
 .v-stage img { transition: filter .15s ease; }
 .v-cap { order: 3; }
 @media (max-width: 520px) {
@@ -227,3 +227,9 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
   .v-side { width: 38px; min-width: 38px; min-height: 52px; }
   .v-bar { padding: 58px 8px 8px; }
 }
+
+/* Original-quality, centered gallery focus mode */
+.viewer .v-stage img { image-rendering: auto; image-orientation: from-image; backface-visibility: hidden; }
+.viewer.controls-hidden { background: #000; }
+.viewer.controls-hidden .v-stage { display: block; width: 100vw; height: 100dvh; }
+.viewer.controls-hidden .v-stage img { position: absolute; top: 50%; left: 50%; right: auto; bottom: auto; margin: 0; max-width: none; max-height: none; transform-origin: center center; }

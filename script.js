@@ -775,8 +775,7 @@
       controlsHidden = false; updateFilterButtons(); token++; img.hidden = false; msg.hidden = true;
       img.alt = item.caption || 'Image'; cap.textContent = item.caption || ''; cap.hidden = !item.caption;
       var my = token;
-      if (item.thumb && item.thumb !== item.full) { img.src = item.thumb; var hi = new Image(); hi.onload = function () { if (my === token) img.src = item.full; }; hi.src = item.full; }
-      else img.src = item.full;
+      img.src = item.full;
       root.querySelector('[data-act="prev"]').hidden = gallery.length < 2;
       root.querySelector('[data-act="next"]').hidden = gallery.length < 2;
     }
@@ -818,15 +817,8 @@
           try { history.pushState({ omniletterViewer: true }, '', location.href); viewerHistoryOpen = true; } catch (e) {}
         }
         var my = ++token;
-        if (thumb && thumb !== full) {
-          // show the small one at once, swap in the full-size one when it has loaded
-          img.src = thumb;
-          var hi = new Image();
-          hi.onload = function () { if (my === token) { img.src = full; } };
-          hi.src = full;
-        } else {
-          img.src = full;
-        }
+        // The viewer always loads the original URL directly, never a resized thumbnail.
+        img.src = full;
         closeBtn.focus();
       }
     };
