@@ -564,7 +564,7 @@
 
   function renderPost(post, isLetter) {
     var art = el('div', 'post');
-    art.appendChild(copyButton(post.id));
+    if (!isLetter) art.appendChild(copyButton(post.id));
     if (post.title) art.appendChild(el(isLetter ? 'h1' : 'h2', 'post-title', post.title));
     if (post.date) art.appendChild(el('p', 'post-date', post.date));
     post.blocks.forEach(function (b) { art.appendChild(renderBlock(b)); });
@@ -593,6 +593,8 @@
       '<button type="button" data-act="next" aria-label="Next photo">›</button>' +
       '<button type="button" data-act="out" aria-label="Zoom out">\u2212</button>' +
       '<button type="button" data-act="in" aria-label="Zoom in">+</button>' +
+      '<button type="button" data-act="rotate">Rotate 90°</button>' +
+      '<button type="button" data-act="filter">Reading: Off</button>' +
       '<button type="button" data-act="reset">Reset</button>' +
       '<button type="button" data-act="full">Fullscreen</button>' +
       '<button type="button" data-act="close">Close</button>' +
@@ -610,7 +612,7 @@
 
     var MAX = 8;
     var gallery = [], galleryIndex = 0;
-    var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '';
+    var s = 1, x = 0, y = 0, token = 0, lastFocus = null, prevOverflow = '', rotation = 0, reading = false;
     var pts = {}, count = 0, moved = false, startX = 0, startY = 0, lastTap = 0, tapX = 0, tapY = 0;
 
     var reqFs = root.requestFullscreen || root.webkitRequestFullscreen;
@@ -627,7 +629,8 @@
     }
     function apply() {
       clamp();
-      img.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
+      img.style.transform = 'translate(' + x + 'px,' + y + 'px) rotate(' + rotation + 'deg) scale(' + s + ')';
+      img.classList.toggle('reading-filter', reading);
       stage.classList.toggle('zoomed', s > 1);
     }
     // cx, cy are relative to the stage centre
@@ -704,7 +707,9 @@
       var act = e.target.getAttribute && e.target.getAttribute('data-act');
       if (act === 'in') zoomAt(s * 1.5, 0, 0);
       else if (act === 'out') zoomAt(s / 1.5, 0, 0);
-      else if (act === 'reset') reset();
+      else if (act === 'reset') { rotation = 0; reading = false; root.querySelector('[data-act="filter"]').textContent = 'Reading: Off'; reset(); }
+      else if (act === 'rotate') { rotation = (rotation + 90) % 360; reset(); }
+      else if (act === 'filter') { reading = !reading; root.querySelector('[data-act="filter"]').textContent = reading ? 'Reading: On' : 'Reading: Off'; apply(); }
       else if (act === 'prev') changePhoto(-1);
       else if (act === 'next') changePhoto(1);
       else if (act === 'close') close();
@@ -760,7 +765,8 @@
         prevOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
         pts = {}; count = 0; lastTap = 0;
-        s = 1; x = 0; y = 0;
+        s = 1; x = 0; y = 0; rotation = 0; reading = false;
+        root.querySelector('[data-act="filter"]').textContent = 'Reading: Off';
         img.style.transform = '';
         img.hidden = false; msg.hidden = true;
         img.alt = caption || 'Image';

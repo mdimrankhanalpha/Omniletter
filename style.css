@@ -197,3 +197,6 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Reading aid: improve contrast and detail without changing the source image. */
+.v-stage img.reading-filter { filter: contrast(1.35) brightness(1.08) saturate(1.08) ; }
