@@ -198,5 +198,32 @@ video { aspect-ratio: 16 / 9; max-height: 85vh; background: #000; object-fit: co
   * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 
-/* Reading aid: improve contrast and detail without changing the source image. */
-.v-stage img.reading-filter { filter: contrast(1.35) brightness(1.08) saturate(1.08) ; }
+/* Reader-friendly mobile image viewer controls */
+.viewer { isolation: isolate; }
+.v-bar { order: 0; justify-content: center; background: #12110f; }
+.v-stage { order: 1; }
+.v-bottom { order: 2; display: flex; justify-content: center; gap: 14px; padding: 8px; background: #12110f; }
+.v-bottom button, .v-menu-toggle, .v-side {
+  border: 1px solid #55504a; border-radius: 3px; background: #2a2825; color: #eee;
+  font: inherit; cursor: pointer; min-width: 48px; min-height: 44px; padding: 8px 14px;
+}
+.v-bottom button { min-width: 64px; font-size: 1.35rem; }
+.v-menu-toggle { position: absolute; z-index: 4; top: 8px; right: 8px; }
+.v-side { position: absolute; z-index: 3; top: 50%; transform: translateY(-50%); width: 44px; min-width: 44px; padding: 0; font-size: 2rem; background: rgba(42,40,37,.82); }
+.v-prev { left: 6px; }
+.v-next { right: 6px; }
+.v-bar[hidden], .v-side[hidden] { display: none !important; }
+.viewer.controls-hidden .v-bar,
+.viewer.controls-hidden .v-menu-toggle,
+.viewer.controls-hidden .v-bottom,
+.viewer.controls-hidden .v-cap,
+.viewer.controls-hidden .v-side { display: none !important; }
+.viewer.controls-hidden .v-stage { position: absolute; inset: 0; }
+.viewer.controls-hidden .v-stage img { object-fit: contain; }
+.v-stage img { transition: filter .15s ease; }
+.v-cap { order: 3; }
+@media (max-width: 520px) {
+  .v-menu-toggle { top: 6px; right: 6px; font-size: .85rem; }
+  .v-side { width: 38px; min-width: 38px; min-height: 52px; }
+  .v-bar { padding: 58px 8px 8px; }
+}
