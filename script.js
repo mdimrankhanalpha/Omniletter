@@ -658,16 +658,32 @@
       window.clearTimeout(controlsTimer);
       if (show && !root.hidden) controlsTimer = window.setTimeout(function () { root.classList.add('controls-hidden'); }, 2600);
     }
+    // Warm the complete post gallery in the background while the reader views one photo.
+    // The currently selected original gets high priority; other originals are prefetched at low priority.
+    var warmed = Object.create(null);
+    function warmGallery(skipIndex) {
+      gallery.forEach(function (item, i) {
+        if (i === skipIndex || !item || !item.full || warmed[item.full]) return;
+        var pre = new Image();
+        warmed[item.full] = pre;
+        try { pre.fetchPriority = 'low'; } catch (err) { /* older browser */ }
+        pre.decoding = 'async';
+        pre.src = item.full;
+      });
+    }
     function setPhoto(item, idx) {
       if (!item) return;
       galleryIndex = idx; reset(); img.hidden = false; msg.hidden = true;
       cap.textContent = item.caption || ''; cap.hidden = !item.caption; img.alt = item.caption || 'Image';
       var my = ++token;
-      if (item.thumb && item.thumb !== item.full) {
-        img.src = item.thumb; var hi = new Image();
-        hi.onload = function () { if (my === token) img.src = item.full; };
-        hi.onerror = function () { if (my === token) img.src = item.full; }; hi.src = item.full;
-      } else img.src = item.full;
+      // Request the original immediately instead of waiting for a low-resolution proxy.
+      // This avoids the proxy's response time delaying the high-resolution image.
+      img.setAttribute('fetchpriority', 'high');
+      img.decoding = 'async';
+      img.onload = function () { if (my === token) apply(); };
+      img.onerror = function () { if (my === token) { msg.hidden = false; } };
+      img.src = item.full;
+      warmGallery(idx);
       prevBtn.hidden = gallery.length < 2; nextBtn.hidden = gallery.length < 2;
       prevBtn.disabled = galleryIndex <= 0; nextBtn.disabled = galleryIndex >= gallery.length - 1;
     }
